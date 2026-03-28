@@ -1,0 +1,9 @@
+{
+  "name": "trackness",
+  "description": "Trackness plugin marketplace for Claude Code",
+  "owner": {
+    "name": "trackness",
+    "email": "trackness@users.noreply.github.com"
+  },
+  "plugins": []
+}
