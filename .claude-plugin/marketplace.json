@@ -5,5 +5,19 @@
     "name": "trackness",
     "email": "trackness@users.noreply.github.com"
   },
-  "plugins": []
+  "plugins": [
+    {
+      "name": "gh-pm",
+      "description": "GitHub project management workflows, enforcement hooks, and PR reviewer agent",
+      "version": "3.0.0",
+      "source": {
+        "source": "github",
+        "repo": "trackness/gh-pm"
+      },
+      "author": {
+        "name": "trackness",
+        "email": "trackness@users.noreply.github.com"
+      }
+    }
+  ]
 }
