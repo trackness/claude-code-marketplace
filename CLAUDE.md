@@ -5,18 +5,7 @@
   - When a question reads like a request to act ("can you clean this up?"), the answer names the action a directive would trigger and stops there — the action itself STILL waits for a directive.
   - Act ONLY on a directive — one present in the message or one already standing from an earlier message; inferring "what he must want done" from a question, statement, or rebuke is acting without a directive.
   - When one message mixes questions, directives, and criticism, answer every question AND carry out every directive present or standing — tone NEVER adds a directive and NEVER cancels one.
-  - When any user utterance — question, statement, rebuke, or directive — could refer to more than one thing, reply with every competing reading; act ONLY on the reading the user confirms AFTER those readings have been put in front of him — a confident guess is still a guess.
-  - A competing reading exists ONLY where the message and its context genuinely support it; a reading constructed so that unwelcome work can wait is NOT a competing reading — raising one to stall IS the permission-asking the Faults rule bans, never ambiguity-surfacing.
-  - A rebuke's or correction's referent is settled ONLY when the message names it, or when exactly one thing exists that it could be reacting to; felt certainty — "it obviously means X" — NEVER settles it.
-  - When a directive admits more than one reading and the readings differ in WHICH destructive acts they run — history rewrite, rebase, force-push, deletion, whatever the operation is called — every such reading is an unconfirmed guess, EVEN when all of them are destructive: surface the readings, and NO destructive act runs until the user confirms one.
   - Answer multiple questions individually in one numbered list; questions clearly seeking the same answer MAY be collapsed into one answer.
-
-- **Directives**
-  - When the user issues a directive — on its own or mixed into anything else — ALWAYS carry it out, through whatever gates the other rules put on the work; acknowledging it, agreeing with it, or planning it NEVER substitutes for doing it.
-  - When executing ANY directive, optimize the result against the user's goal — stated, or evident from what he is trying to get — NEVER against the defensibility of your own changes; minimality, mechanical safety, and provable non-alteration count for NOTHING while the result is still bad.
-  - When a directive names its target but leaves depth open ("tidy this up"), execute to a genuinely good result: a clear target with vague depth is a mandate to do the work well, NEVER an ambiguity to bounce back, and the narrowest defensible reading NEVER defines the job.
-  - Vague depth on a clear target is NEVER referent ambiguity — the Questions rule's competing-readings guard asks WHICH thing is meant, never HOW well to do it, and it NEVER pauses such a directive; but when the candidate executions differ in WHICH destructive acts they run, that spread is never depth — it is competing readings, and the Questions rule's destructive-act guard governs it.
-  - Declare a directive done ONLY when the result is good measured against the user's goal, NEVER merely because every change you made is justifiable.
 
 - **Lists**
   - When anything needs a user response — choices, questions, approvals — ALWAYS present it as a numbered list, however short or obvious the items.
@@ -33,16 +22,15 @@
 - **Branches**
   - When starting ANY work, it goes on a branch, NEVER directly on main — no exception for size, urgency, or "just a tweak".
   - EVERY branch name MUST be a readable `<type>/<thing>` name that tells a future reader what the branch did.
-  - Related items MUST be grouped onto one branch; unrelated items get separate branches.
+  - Related items MUST be grouped onto one branch.
   - BEFORE starting work on any branch, announce to James the branch name plus the exact contents planned for it — exact means the announcement settles, for any commit later proposed, whether it falls inside or beyond; a catch-all ("assorted improvements") announces NOTHING — and begin ONLY after that announcement has actually reached him: NEVER in the same turn it is made, and NEVER on the strength of a turn boundary, automated continuation, or unattended run that has not put it in front of him.
-  - ANY redirect from James MUST be followed immediately — whatever it redirects and whenever it arrives.
   - Push EVERY branch to origin and open exactly one pull request from it.
   - Merge ONLY on James's explicit say-so to merge; his approval of a plan, of code, of an approach, or of the pull request itself is NEVER say-so to merge.
 
 - **Commits**
   - EVERY commit message MUST follow Conventional Commits 1.0.0.
   - When a workflow fix-round — a delegated round of follow-up commits on an existing branch — finishes, report to James the full commit list of the branch it worked on: every commit, NEVER a summary.
-  - BEFORE pushing any commit whose changes go beyond what James was told its branch would contain, re-announce that commit to James, however small the excess — on a branch never announced to him EVERY commit goes beyond, and a commit the announcement cannot settle as inside falls beyond too.
+  - Any commit beyond the announced contents of its branch is re-announced to James BEFORE push.
   - Squash-commit a branch ONLY after James approves the pull request opened from that branch; that approval opens the squash gate ONLY — when the squash executes as a merge (a squash-merge), the merge is governed by the Branches rule and still needs James's explicit say-so to merge.
 
 - **History**
