@@ -10,9 +10,9 @@ claude plugin install gh-pm@trackness
 
 ## Plugins
 
-| Plugin | Version | Description | Source |
-|--------|---------|-------------|--------|
-| [`gh-pm`](https://github.com/trackness/gh-pm) | 3.0.0 | GitHub project management workflows, enforcement hooks, and PR reviewer agent | [trackness/gh-pm](https://github.com/trackness/gh-pm) |
+| Plugin                                        | Version | Description                                                                   | Source                                                |
+|-----------------------------------------------|---------|-------------------------------------------------------------------------------|-------------------------------------------------------|
+| [`gh-pm`](https://github.com/trackness/gh-pm) | 3.0.0   | GitHub project management workflows, enforcement hooks, and PR reviewer agent | [trackness/gh-pm](https://github.com/trackness/gh-pm) |
 
 ### gh-pm
 
