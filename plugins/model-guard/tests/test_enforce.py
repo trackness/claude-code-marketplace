@@ -459,6 +459,93 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(d, "abstain")
 
 
+class SlashAmbiguityRegressionTests(unittest.TestCase):
+    """Regressions for the token-lexer slash-classification holes: a keyword used
+    as a member/property, a bare contextual keyword, a member method whose name
+    is a control keyword, a block-closing brace, and a unicode-escaped call name
+    must never let a model-less agent() spawn be swallowed as a regex literal and
+    silently allowed."""
+
+    def wf(self, script):
+        return decide(workflow_payload({"script": script}))
+
+    # --- Finding 1: a regex-prefix keyword used as a PROPERTY (obj.do,
+    # gen.return, x.in, ...) is a value, so the following '/' is division and the
+    # agent() between the slashes is real code, not regex content -> must deny.
+    def test_member_keyword_property_slash_is_division_not_regex(self):
+        for member in ("obj.do", "gen.return", "arr.of", "x.in", "gen.throw",
+                       "o.yield", "o.await", "o.case", "o.delete"):
+            script = "%s /agent('m',{t:1})/ ;" % member
+            d, _ = self.wf(script)
+            self.assertEqual(d, "deny", "%s must expose the spawn" % member)
+
+    def test_member_keyword_division_does_not_over_deny_modeled(self):
+        # the same member-property division around a *modeled* call must allow.
+        d, _ = self.wf(
+            "let obj={do:6}; let z = obj.do / agent('m',{ model: 'opus' }) / 2;")
+        self.assertEqual(d, "abstain")
+
+    # --- Finding 2/5: a member method whose name is a control keyword
+    # (p.catch(), o.for(), p?.catch(), o.switch()) closes a CALL, so its ')' is a
+    # value and the following '/' is division -> the later agent() is exposed.
+    def test_member_control_method_slash_is_division(self):
+        for pre in ("x.catch(fn)", "o.for(x)", "p?.catch(fn)", "o.switch(x)"):
+            script = "%s / a; agent('a', {t:1}) / b;" % pre
+            d, _ = self.wf(script)
+            self.assertEqual(d, "deny", "%s must expose the spawn" % pre)
+
+    def test_member_control_method_division_does_not_over_deny(self):
+        # ordinary `.catch()` division around a modeled call is common real code.
+        d, _ = self.wf(
+            "const r = p.catch(fn) / total; agent('a', { model: 'opus' });")
+        self.assertEqual(d, "abstain")
+
+    # --- Finding 3: the contextual keywords of / yield / await can be
+    # identifiers (sloppy binding) or properties that END an expression, so a
+    # following '/' is division and swallows nothing -> the spawn must deny.
+    def test_contextual_keyword_identifier_slash_is_division(self):
+        for kw in ("of", "await", "yield"):
+            script = "var %s = 1;\n%s / agent('t', {}) / 2;" % (kw, kw)
+            d, _ = self.wf(script)
+            self.assertEqual(d, "deny", "%s identifier must expose spawn" % kw)
+
+    def test_contextual_keyword_property_slash_is_division(self):
+        d, _ = self.wf("let obj={of:1}; obj.of / agent('t', {}) / 2;")
+        self.assertEqual(d, "deny")
+
+    # --- Finding 4: a unicode-escaped call identifier (agent -> agent)
+    # cannot be lexed as the name "agent"/"workflow"; the stray backslash is a
+    # structural anomaly and must fail closed rather than silently allow.
+    def test_unicode_escaped_agent_identifier_deny(self):
+        d, _ = self.wf("\\u0061gent('t', {})")
+        self.assertEqual(d, "deny")
+
+    def test_unicode_escaped_workflow_identifier_deny(self):
+        d, _ = self.wf("\\u0077orkflow('t', {})")
+        self.assertEqual(d, "deny")
+
+    def test_unicode_escaped_identifier_in_interpolation_deny(self):
+        d, _ = self.wf("`${ \\u0061gent('t', {}) }`")
+        self.assertEqual(d, "deny")
+
+    # --- Finding 6: a '/' after a block-closing '}' is division (the fatal-safe
+    # reading); a model-less agent() following it stays a visible token.
+    def test_block_close_slash_is_division(self):
+        d, _ = self.wf("function f(){} / a; agent('a', {t:1}) / b;")
+        self.assertEqual(d, "deny")
+
+    # --- Preservation: an agent()-shaped substring INSIDE a genuine regex
+    # literal (unambiguous regex position) is regex content, never executes, and
+    # must not deny a script whose only real spawn is properly modeled.
+    def test_agent_shape_inside_genuine_regex_allows_modeled_spawn(self):
+        for regex_pos in ("f(1, /agent(x)/);",
+                          "const o = { v: /agent(x)/ };",
+                          "const re = /agent(y)/g;"):
+            script = "%s agent('p', { model: 'opus' });" % regex_pos
+            d, _ = self.wf(script)
+            self.assertEqual(d, "abstain", "%s must allow" % regex_pos)
+
+
 class WorkflowShapeTests(unittest.TestCase):
     def test_name_only_ask(self):
         d, r = decide(workflow_payload({"name": "deep-research"}))
