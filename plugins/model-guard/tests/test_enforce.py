@@ -25,14 +25,20 @@ persistent disagreement is a suspected hook bug to report, not to paper over.
 
 stdlib only; python3 >= 3.9. Run: python3 -m unittest discover <this dir> -v
 """
+
 import os
 import random
 import tempfile
 import unittest
+from typing import ClassVar
 
 from helpers import (
-    HookTestCase, run_hook,
-    agent_payload, task_payload, workflow_payload, workflow_script,
+    HookTestCase,
+    agent_payload,
+    run_hook,
+    task_payload,
+    workflow_payload,
+    workflow_script,
 )
 
 
@@ -49,41 +55,48 @@ class AgentPolicyTests(HookTestCase):
 
     def test_missing_model_denies(self):
         self.assert_deny(
-            agent_payload({"subagent_type": "general-purpose",
-                           "prompt": "reply done"}),
-            reason_substring="model")
+            agent_payload({"subagent_type": "general-purpose", "prompt": "reply done"}),
+            reason_substring="model",
+        )
 
     def test_valid_models_abstain(self):
         for model in self.VALID:
             with self.subTest(model=model):
-                self.assert_abstain(agent_payload({"model": model,
-                                                   "prompt": "x"}))
+                self.assert_abstain(agent_payload({"model": model, "prompt": "x"}))
 
     def test_blank_model_denies(self):
         for blank in ("", "   ", "\t", "\n"):
             with self.subTest(blank=repr(blank)):
-                self.assert_deny(agent_payload({"model": blank, "prompt": "x"}),
-                                 reason_substring="model")
+                self.assert_deny(
+                    agent_payload({"model": blank, "prompt": "x"}),
+                    reason_substring="model",
+                )
 
     def test_banned_models_deny(self):
         for model in self.BANNED:
             with self.subTest(model=model):
-                self.assert_deny(agent_payload({"model": model, "prompt": "x"}),
-                                 reason_substring="banned")
+                self.assert_deny(
+                    agent_payload({"model": model, "prompt": "x"}),
+                    reason_substring="banned",
+                )
 
     def test_banned_is_case_insensitive(self):
         for model in ("FABLE", "Fable", "INHERIT", "InHeRiT", " fable "):
             with self.subTest(model=model):
-                self.assert_deny(agent_payload({"model": model, "prompt": "x"}),
-                                 reason_substring="banned")
+                self.assert_deny(
+                    agent_payload({"model": model, "prompt": "x"}),
+                    reason_substring="banned",
+                )
 
     def test_non_string_model_denies(self):
         # A non-str model is not an explicit textual choice: it fails the
         # isinstance(str) gate and falls through to the omitted-model deny.
         for model in (123, 1.5, True, None, {"name": "opus"}, ["opus"]):
             with self.subTest(model=model):
-                self.assert_deny(agent_payload({"model": model, "prompt": "x"}),
-                                 reason_substring="model")
+                self.assert_deny(
+                    agent_payload({"model": model, "prompt": "x"}),
+                    reason_substring="model",
+                )
 
     def test_task_alias_matches_agent(self):
         # Task is a pure alias of Agent: same deny on missing, same abstain on a
@@ -107,46 +120,50 @@ class FrontmatterPinTests(HookTestCase):
         agents_dir = os.path.join(base_dir, ".claude", "agents")
         os.makedirs(agents_dir, exist_ok=True)
         with open(os.path.join(agents_dir, type_name + ".md"), "w") as f:
-            f.write("---\nname: %s\nmodel: %s\ndescription: t\n---\nBody.\n"
-                    % (type_name, model))
+            f.write(
+                "---\nname: %s\nmodel: %s\ndescription: t\n---\nBody.\n"
+                % (type_name, model)
+            )
 
     def test_pin_allows_omitted_model(self):
         with tempfile.TemporaryDirectory() as tmp:
             self._write_pin(tmp, "reviewer", "sonnet")
-            self.assert_abstain(agent_payload({"subagent_type": "reviewer"},
-                                              cwd=tmp))
+            self.assert_abstain(agent_payload({"subagent_type": "reviewer"}, cwd=tmp))
 
     def test_pin_found_walking_up_from_subdir(self):
         with tempfile.TemporaryDirectory() as tmp:
             self._write_pin(tmp, "reviewer", "opus")
             deep = os.path.join(tmp, "a", "b", "c")
             os.makedirs(deep, exist_ok=True)
-            self.assert_abstain(agent_payload({"subagent_type": "reviewer"},
-                                              cwd=deep))
+            self.assert_abstain(agent_payload({"subagent_type": "reviewer"}, cwd=deep))
 
     def test_pin_found_via_home_fallback(self):
         # No ancestor of cwd holds the pin; only ~/.claude/agents does. The hook
         # resolves it via the HOME fallback appended after the walk-up.
-        with tempfile.TemporaryDirectory() as home, \
-                tempfile.TemporaryDirectory() as work:
+        with (
+            tempfile.TemporaryDirectory() as home,
+            tempfile.TemporaryDirectory() as work,
+        ):
             self._write_pin(home, "hp_home_only_pin_zzz", "haiku")
             self.assert_abstain(
-                agent_payload({"subagent_type": "hp_home_only_pin_zzz"},
-                              cwd=work),
-                env={"HOME": home})
+                agent_payload({"subagent_type": "hp_home_only_pin_zzz"}, cwd=work),
+                env={"HOME": home},
+            )
 
     def test_banned_pin_denies(self):
         with tempfile.TemporaryDirectory() as tmp:
             self._write_pin(tmp, "reviewer", "fable")
-            self.assert_deny(agent_payload({"subagent_type": "reviewer"},
-                                           cwd=tmp),
-                             reason_substring="banned")
+            self.assert_deny(
+                agent_payload({"subagent_type": "reviewer"}, cwd=tmp),
+                reason_substring="banned",
+            )
 
     def test_unknown_type_denies(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assert_deny(
                 agent_payload({"subagent_type": "does-not-exist"}, cwd=tmp),
-                reason_substring="model")
+                reason_substring="model",
+            )
 
     def test_traversal_type_rejected(self):
         # A subagent_type carrying a path separator (or . / ..) is refused before
@@ -154,21 +171,28 @@ class FrontmatterPinTests(HookTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             # Plant a real pin one level up to prove it is NOT reachable.
             self._write_pin(os.path.dirname(tmp), "reviewer", "opus")
-            for bad in ("../reviewer", "..\\reviewer", "a/b", ".", "..",
-                        "sub/../reviewer"):
+            for bad in (
+                "../reviewer",
+                "..\\reviewer",
+                "a/b",
+                ".",
+                "..",
+                "sub/../reviewer",
+            ):
                 with self.subTest(type=bad):
                     self.assert_deny(
                         agent_payload({"subagent_type": bad}, cwd=tmp),
-                        reason_substring="model")
+                        reason_substring="model",
+                    )
 
     def test_explicit_call_model_checked_before_pin(self):
         # A valid pin does NOT rescue an explicitly banned call-site model.
         with tempfile.TemporaryDirectory() as tmp:
             self._write_pin(tmp, "reviewer", "opus")
             self.assert_deny(
-                agent_payload({"subagent_type": "reviewer", "model": "fable"},
-                              cwd=tmp),
-                reason_substring="banned")
+                agent_payload({"subagent_type": "reviewer", "model": "fable"}, cwd=tmp),
+                reason_substring="banned",
+            )
 
 
 # =========================================================================
@@ -182,12 +206,15 @@ class WorkflowShapeTests(HookTestCase):
     denies (fail-closed)."""
 
     def test_name_only_asks(self):
-        self.assert_ask(workflow_payload({"name": "deep-research"}),
-                        reason_substring="statically")
+        self.assert_ask(
+            workflow_payload({"name": "deep-research"}), reason_substring="statically"
+        )
 
     def test_resume_only_asks(self):
-        self.assert_ask(workflow_payload({"resumeFromRunId": "run_123"}),
-                        reason_substring="statically")
+        self.assert_ask(
+            workflow_payload({"resumeFromRunId": "run_123"}),
+            reason_substring="statically",
+        )
 
     def test_strict_flag_denies_saved_workflow(self):
         # _env_flag accepts any of these truthy spellings -> strict deny; any
@@ -196,12 +223,14 @@ class WorkflowShapeTests(HookTestCase):
             with self.subTest(flag=repr(truthy)):
                 self.assert_deny(
                     workflow_payload({"name": "deep-research"}),
-                    env={"MODEL_GUARD_STRICT_SAVED_WORKFLOWS": truthy})
+                    env={"MODEL_GUARD_STRICT_SAVED_WORKFLOWS": truthy},
+                )
         for falsey in ("0", "false", "no", "off", "", "  ", "banana"):
             with self.subTest(flag=repr(falsey)):
                 self.assert_ask(
                     workflow_payload({"resumeFromRunId": "r1"}),
-                    env={"MODEL_GUARD_STRICT_SAVED_WORKFLOWS": falsey})
+                    env={"MODEL_GUARD_STRICT_SAVED_WORKFLOWS": falsey},
+                )
 
     def test_no_verifiable_field_denies(self):
         self.assert_deny(workflow_payload({"args": {"foo": 1}}))
@@ -214,20 +243,20 @@ class WorkflowShapeTests(HookTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "wf.js"), "w") as f:
                 f.write("agent('x', { temperature: 1 });")
-            self.assert_deny(workflow_payload({"scriptPath": "wf.js"}, cwd=tmp),
-                             reason_substring="model")
+            self.assert_deny(
+                workflow_payload({"scriptPath": "wf.js"}, cwd=tmp),
+                reason_substring="model",
+            )
 
     def test_scriptpath_clean_abstains(self):
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "wf.js"), "w") as f:
                 f.write("agent('x', { model: 'opus' });")
-            self.assert_abstain(
-                workflow_payload({"scriptPath": "wf.js"}, cwd=tmp))
+            self.assert_abstain(workflow_payload({"scriptPath": "wf.js"}, cwd=tmp))
 
     def test_scriptpath_unreadable_denies(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self.assert_deny(
-                workflow_payload({"scriptPath": "missing.js"}, cwd=tmp))
+            self.assert_deny(workflow_payload({"scriptPath": "missing.js"}, cwd=tmp))
 
     def test_inline_script_clean_abstains(self):
         self.wf_abstain("agent('do a', { model: 'opus' });")
@@ -249,12 +278,16 @@ class LexerConformanceTests(HookTestCase):
     def test_model_mention_in_string_prompt_is_not_a_key(self):
         # A `model:` substring living inside the prompt STRING is token content,
         # never a top-level opts key. All three quote forms must still deny.
-        self.wf_deny("agent('please set model: opus here', { other: 1 });",
-                     reason_substring="model")
-        self.wf_deny('agent("model: opus in text", { other: 1 });',
-                     reason_substring="model")
-        self.wf_deny("agent(`model: opus templated`, { other: 1 });",
-                     reason_substring="model")
+        self.wf_deny(
+            "agent('please set model: opus here', { other: 1 });",
+            reason_substring="model",
+        )
+        self.wf_deny(
+            'agent("model: opus in text", { other: 1 });', reason_substring="model"
+        )
+        self.wf_deny(
+            "agent(`model: opus templated`, { other: 1 });", reason_substring="model"
+        )
 
     def test_string_escapes_do_not_terminate_early(self):
         # An escaped quote inside a string does not close it; the opts object and
@@ -265,19 +298,24 @@ class LexerConformanceTests(HookTestCase):
     def test_template_with_nested_interpolation_parsed(self):
         # A template prompt whose ${...} nests quotes, arrays, braces and a call
         # lexes cleanly; the top-level model on the opts object -> allow.
-        script = ("agent(`process "
-                  "${JSON.stringify({a: \"x\", b: [1, 2], c: fn(3, 4)})} now`, "
-                  "{ model: 'sonnet' });")
+        script = (
+            "agent(`process "
+            '${JSON.stringify({a: "x", b: [1, 2], c: fn(3, 4)})} now`, '
+            "{ model: 'sonnet' });"
+        )
         self.wf_abstain(script)
 
     # ---- comments --------------------------------------------------------
     def test_block_comment_model_is_not_a_key(self):
-        self.wf_deny("agent('x', { /* model: 'opus' */ other: 1 });",
-                     reason_substring="model")
+        self.wf_deny(
+            "agent('x', { /* model: 'opus' */ other: 1 });", reason_substring="model"
+        )
 
     def test_line_comment_model_is_not_a_key(self):
-        self.wf_deny("agent('x', {\n  // model: 'opus'\n  other: 1\n});",
-                     reason_substring="model")
+        self.wf_deny(
+            "agent('x', {\n  // model: 'opus'\n  other: 1\n});",
+            reason_substring="model",
+        )
 
     def test_comment_does_not_break_a_real_model(self):
         self.wf_abstain("agent('x', {\n  // pick carefully\n  model: 'haiku'\n});")
@@ -285,17 +323,18 @@ class LexerConformanceTests(HookTestCase):
     # ---- regex in EXPRESSION position (value) ----------------------------
     def test_regex_value_is_not_a_model_key(self):
         # /model:/ is a regex value, not a `model` key -> deny.
-        self.wf_deny("agent('x', { validate: /model:/ });",
-                     reason_substring="model")
+        self.wf_deny("agent('x', { validate: /model:/ });", reason_substring="model")
 
     def test_agent_shape_inside_genuine_regex_is_opaque(self):
         # An agent()-shaped substring inside a real regex literal is regex
         # content -- one opaque token -- so the only executing spawn (modeled)
         # allows. Covers value-position regex, object-value regex, flagged regex.
-        for regex_pos in ("f(1, /agent(x)/);",
-                          "const o = { v: /agent(x)/ };",
-                          "const re = /agent(y)/g;",
-                          "const re = /x/gimsuy;"):
+        for regex_pos in (
+            "f(1, /agent(x)/);",
+            "const o = { v: /agent(x)/ };",
+            "const re = /agent(y)/g;",
+            "const re = /x/gimsuy;",
+        ):
             with self.subTest(regex_pos=regex_pos):
                 self.wf_abstain("%s agent('p', { model: 'opus' });" % regex_pos)
 
@@ -312,8 +351,8 @@ class LexerConformanceTests(HookTestCase):
         # Two divisions sandwiching a balanced string stay local (the string
         # cannot swallow the call) -> not flagged.
         self.wf_abstain(
-            "const r = a / b + \"note\" + c / d; "
-            "agent('x', { model: 'opus' });")
+            "const r = a / b + \"note\" + c / d; agent('x', { model: 'opus' });"
+        )
 
     def test_division_by_modeled_call_result_abstains(self):
         # `x / agent(...)`: the slash is division, the call still lints (modeled).
@@ -322,29 +361,26 @@ class LexerConformanceTests(HookTestCase):
     def test_postfix_increment_then_slash_is_division(self):
         # `i++ / agent(...)`: '++' ends an expression so '/' is division, leaving
         # the following spawn a visible token. Model-less -> deny; modeled -> ok.
-        self.wf_deny("let i = 0; i++ / agent('x', { t: 1 });",
-                     reason_substring="model")
+        self.wf_deny("let i = 0; i++ / agent('x', { t: 1 });", reason_substring="model")
         self.wf_abstain("let i = 0; i++ / agent('x', { model: 'opus' });")
 
     def test_regex_after_keyword_terminates_cleanly(self):
         # After a beforeExpr keyword a '/' opens a regex; the regex must
         # terminate at its own closing '/' and not swallow the following spawn.
-        self.wf_deny("x = typeof /it's/; agent('y', { t: 1 });",
-                     reason_substring="model")
-        self.wf_deny("return /it's/; agent('x', { t: 1 });",
-                     reason_substring="model")
+        self.wf_deny(
+            "x = typeof /it's/; agent('y', { t: 1 });", reason_substring="model"
+        )
+        self.wf_deny("return /it's/; agent('x', { t: 1 });", reason_substring="model")
 
     def test_keyword_regex_with_quote_does_not_over_deny(self):
         # A legit quote-bearing regex after a keyword is skipped as a regex,
         # leaving a properly-modeled call allowed.
-        self.wf_abstain(
-            "return /it's a test/.test(x); agent('y', { model: 'opus' });")
+        self.wf_abstain("return /it's a test/.test(x); agent('y', { model: 'opus' });")
 
     def test_regex_escaped_slashes_not_a_line_comment(self):
         # '//' produced by escaped slashes inside a regex is regex content, not a
         # line comment that would swallow the rest of the line (and its spawn).
-        self.wf_deny("x = /a\\/\\//; agent('m', { t: 1 });",
-                     reason_substring="model")
+        self.wf_deny("x = /a\\/\\//; agent('m', { t: 1 });", reason_substring="model")
 
     # ---- member-access exclusion (obj.agent is not the DSL agent) --------
     def test_member_call_not_matched(self):
@@ -378,24 +414,26 @@ class LintSemanticsTests(HookTestCase):
         self.wf_deny(
             "agent('x', { schema: { type: 'object', "
             "properties: { model: { type: 'string' } } } });",
-            reason_substring="model")
+            reason_substring="model",
+        )
 
     def test_ternary_value_position_model_not_a_key(self):
         # A `model` token sitting in a ternary VALUE position (before the
         # ternary's own colon, or in a branch) is not a key. Bareword, double-
         # and single-quoted, and multiline forms all deny.
-        for opts in ("{ x: cond ? model : other }",
-                     "{ onErr: flag ? \"model\" : \"skip\" }",
-                     "{ x: c ? 'model' : y }",
-                     "{ k: cond\n ? model\n : fallback }"):
+        for opts in (
+            "{ x: cond ? model : other }",
+            '{ onErr: flag ? "model" : "skip" }',
+            "{ x: c ? 'model' : y }",
+            "{ k: cond\n ? model\n : fallback }",
+        ):
             with self.subTest(opts=opts):
                 self.wf_deny("agent('do', %s);" % opts, reason_substring="model")
 
     def test_real_key_counts_despite_ternary_value_model(self):
         # A genuine top-level model key still satisfies even alongside a ternary
         # value-position `model` token elsewhere in the same object.
-        self.wf_abstain(
-            "agent('do', { x: cond ? model : other, model: 'opus' });")
+        self.wf_abstain("agent('do', { x: cond ? model : other, model: 'opus' });")
 
     def test_key_after_call_value_comma_counts(self):
         # model key in key position after a comma that follows a call value.
@@ -415,23 +453,32 @@ class LintSemanticsTests(HookTestCase):
     def test_blank_literal_values_deny(self):
         # Raw inner text (no unescaping): only truly empty/whitespace literals
         # are blank -- "\t" here is the two literal chars backslash-t (non-blank).
-        for opts in ("{ model: '' }", '{ model: "" }', "{ model: '  ' }",
-                     "{ model: `` }", "{ model: `   ` }"):
+        for opts in (
+            "{ model: '' }",
+            '{ model: "" }',
+            "{ model: '  ' }",
+            "{ model: `` }",
+            "{ model: `   ` }",
+        ):
             with self.subTest(opts=opts):
                 self.wf_deny("agent('x', %s);" % opts, reason_substring="blank")
 
     def test_banned_literal_values_deny(self):
         # Banned across quote forms and case -- matches the Agent-side ban.
-        for opts in ("{ model: 'fable' }", "{ model: 'inherit' }",
-                     "{ model: 'FABLE' }", '{ model: "fable" }',
-                     "{ model: `fable` }", "{ \"model\": 'inherit' }"):
+        for opts in (
+            "{ model: 'fable' }",
+            "{ model: 'inherit' }",
+            "{ model: 'FABLE' }",
+            '{ model: "fable" }',
+            "{ model: `fable` }",
+            "{ \"model\": 'inherit' }",
+        ):
             with self.subTest(opts=opts):
                 self.wf_deny("agent('x', %s);" % opts, reason_substring="banned")
 
     # ---- no options object -----------------------------------------------
     def test_missing_model_key_denies(self):
-        self.wf_deny("agent('do a', { temperature: 1 });",
-                     reason_substring="model")
+        self.wf_deny("agent('do a', { temperature: 1 });", reason_substring="model")
 
     def test_no_second_arg_denies(self):
         self.wf_deny("agent('just a prompt');", reason_substring="model")
@@ -448,38 +495,44 @@ class LintSemanticsTests(HookTestCase):
     def test_nested_workflow_call_denies(self):
         self.assert_deny(
             workflow_script("agent('a', { model: 'opus' }); workflow('other');"),
-            reason_substring="workflow")
+            reason_substring="workflow",
+        )
 
     # ---- pipeline() is a plain call, not a spawn -------------------------
     def test_pipeline_wrapper_not_flagged(self):
         # pipeline() itself needs no model; its agent() children are each linted.
         self.wf_abstain(
             "pipeline(\n  agent('a', { model: 'haiku' }),\n"
-            "  agent('b', { model: 'sonnet' }),\n);")
+            "  agent('b', { model: 'sonnet' }),\n);"
+        )
         self.wf_deny(
             "pipeline(\n  agent('a', { model: 'haiku' }),\n"
             "  agent('b', { temperature: 1 }),\n);",
-            reason_substring="model")
+            reason_substring="model",
+        )
 
     # ---- calls inside template interpolations ----------------------------
     def test_call_inside_interpolation_is_linted(self):
         # A model-less agent() inside a ${...} is still linted; a `model:` living
         # in the interpolation's own code text is not the outer opts key.
-        self.wf_deny("agent(`x ${a(\"model: y\")}`, { other: 1 });",
-                     reason_substring="model")
+        self.wf_deny(
+            'agent(`x ${a("model: y")}`, { other: 1 });', reason_substring="model"
+        )
 
     # ---- multiple calls: the offender is named ---------------------------
     def test_multi_call_names_missing_offender(self):
         self.wf_deny(
             "agent('good', { model: 'opus' });\n"
             "agent('the-bad-one', { temperature: 1 });\n",
-            reason_substring="the-bad-one")
+            reason_substring="the-bad-one",
+        )
 
     def test_multi_call_names_banned_offender(self):
         self.wf_deny(
             "agent('good', { model: 'opus' });\n"
             "agent('the-bad-one', { model: 'fable' });\n",
-            reason_substring="the-bad-one")
+            reason_substring="the-bad-one",
+        )
 
 
 # =========================================================================
@@ -497,17 +550,28 @@ class SlashClassificationRegressionTests(HookTestCase):
     # gen.return, x.in, ...) is a value, so the following '/' is division and the
     # agent() between the slashes is real code, not regex content -> must deny.
     def test_member_keyword_property_slash_is_division_not_regex(self):
-        for member in ("obj.do", "gen.return", "arr.of", "x.in", "gen.throw",
-                       "o.yield", "o.await", "o.case", "o.delete"):
+        for member in (
+            "obj.do",
+            "gen.return",
+            "arr.of",
+            "x.in",
+            "gen.throw",
+            "o.yield",
+            "o.await",
+            "o.case",
+            "o.delete",
+        ):
             script = "%s /agent('m',{t:1})/ ;" % member
             with self.subTest(member=member):
-                self.assert_deny(workflow_script(script),
-                                 msg="%s must expose the spawn" % member)
+                self.assert_deny(
+                    workflow_script(script), msg="%s must expose the spawn" % member
+                )
 
     def test_member_keyword_division_does_not_over_deny_modeled(self):
         # the same member-property division around a *modeled* call must allow.
         self.wf_abstain(
-            "let obj={do:6}; let z = obj.do / agent('m',{ model: 'opus' }) / 2;")
+            "let obj={do:6}; let z = obj.do / agent('m',{ model: 'opus' }) / 2;"
+        )
 
     # --- Finding 2/5: a member method whose name is a control keyword
     # (p.catch(), o.for(), p?.catch(), o.switch()) closes a CALL, so its ')' is a
@@ -516,13 +580,13 @@ class SlashClassificationRegressionTests(HookTestCase):
         for pre in ("x.catch(fn)", "o.for(x)", "p?.catch(fn)", "o.switch(x)"):
             script = "%s / a; agent('a', {t:1}) / b;" % pre
             with self.subTest(pre=pre):
-                self.assert_deny(workflow_script(script),
-                                 msg="%s must expose the spawn" % pre)
+                self.assert_deny(
+                    workflow_script(script), msg="%s must expose the spawn" % pre
+                )
 
     def test_member_control_method_division_does_not_over_deny(self):
         # ordinary `.catch()` division around a modeled call is common real code.
-        self.wf_abstain(
-            "const r = p.catch(fn) / total; agent('a', { model: 'opus' });")
+        self.wf_abstain("const r = p.catch(fn) / total; agent('a', { model: 'opus' });")
 
     # --- Finding 3: the contextual keywords of / yield / await can be
     # identifiers (sloppy binding) or properties that END an expression, so a
@@ -531,8 +595,9 @@ class SlashClassificationRegressionTests(HookTestCase):
         for kw in ("of", "await", "yield"):
             script = "var %s = 1;\n%s / agent('t', {}) / 2;" % (kw, kw)
             with self.subTest(kw=kw):
-                self.assert_deny(workflow_script(script),
-                                 msg="%s identifier must expose spawn" % kw)
+                self.assert_deny(
+                    workflow_script(script), msg="%s identifier must expose spawn" % kw
+                )
 
     def test_contextual_keyword_property_slash_is_division(self):
         self.wf_deny("let obj={of:1}; obj.of / agent('t', {}) / 2;")
@@ -558,13 +623,16 @@ class SlashClassificationRegressionTests(HookTestCase):
     # literal (unambiguous regex position) is regex content, never executes, and
     # must not deny a script whose only real spawn is properly modeled.
     def test_agent_shape_inside_genuine_regex_allows_modeled_spawn(self):
-        for regex_pos in ("f(1, /agent(x)/);",
-                          "const o = { v: /agent(x)/ };",
-                          "const re = /agent(y)/g;"):
+        for regex_pos in (
+            "f(1, /agent(x)/);",
+            "const o = { v: /agent(x)/ };",
+            "const re = /agent(y)/g;",
+        ):
             script = "%s agent('p', { model: 'opus' });" % regex_pos
             with self.subTest(regex_pos=regex_pos):
-                self.assert_abstain(workflow_script(script),
-                                    msg="%s must allow" % regex_pos)
+                self.assert_abstain(
+                    workflow_script(script), msg="%s must allow" % regex_pos
+                )
 
 
 # =========================================================================
@@ -633,10 +701,11 @@ class FailSafeAbstainTests(HookTestCase):
     empty tool_input has no model)."""
 
     def test_other_tools_abstain(self):
-        for payload in ({"tool_name": "Bash", "tool_input": {"command": "ls"}},
-                        {"tool_name": "Read",
-                         "tool_input": {"file_path": "/etc/hosts"}},
-                        {"tool_name": "Edit", "tool_input": {}}):
+        for payload in (
+            {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+            {"tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}},
+            {"tool_name": "Edit", "tool_input": {}},
+        ):
             with self.subTest(tool=payload["tool_name"]):
                 self.assert_abstain(payload)
 
@@ -663,8 +732,9 @@ class FailSafeAbstainTests(HookTestCase):
 
     def test_null_tool_input_on_agent_denies(self):
         # A null (non-dict) tool_input is coerced to {} -> omitted model -> deny.
-        self.assert_deny({"tool_name": "Agent", "tool_input": None},
-                         reason_substring="model")
+        self.assert_deny(
+            {"tool_name": "Agent", "tool_input": None}, reason_substring="model"
+        )
 
     def test_null_tool_input_on_other_tool_abstains(self):
         self.assert_abstain({"tool_name": "Bash", "tool_input": None})
@@ -687,8 +757,20 @@ class FuzzInvariantTests(HookTestCase):
 
     SEED = 0xC0FFEE
     N = 300
-    _WORDS = ["do", "run", "task", "step", "phase", "handle", "process",
-              "check", "audit", "review", "plan", "build"]
+    _WORDS: ClassVar[list[str]] = [
+        "do",
+        "run",
+        "task",
+        "step",
+        "phase",
+        "handle",
+        "process",
+        "check",
+        "audit",
+        "review",
+        "plan",
+        "build",
+    ]
 
     def _prompt(self, rng):
         n = rng.randint(1, 4)
@@ -696,20 +778,19 @@ class FuzzInvariantTests(HookTestCase):
 
     def _call(self, rng, modeled):
         q = rng.choice(["'", '"'])
-        pstr = q + self._prompt(rng) + q          # prompt carries no quotes
+        pstr = q + self._prompt(rng) + q  # prompt carries no quotes
         extras = []
         if rng.random() < 0.5:
             extras.append("temperature: %d" % rng.randint(0, 2))
         if rng.random() < 0.5:
             extras.append("timeout: %d" % rng.randint(1, 99))
         if rng.random() < 0.4:
-            extras.append("tools: [%d, %d]" % (rng.randint(0, 9),
-                                               rng.randint(0, 9)))
+            extras.append("tools: [%d, %d]" % (rng.randint(0, 9), rng.randint(0, 9)))
         if modeled:
             model = rng.choice(["haiku", "sonnet", "opus"])
             mq = rng.choice(["'", '"', "`"])
             keyfmt = rng.choice(["model", "'model'", '"model"'])
-            parts = extras + ["%s: %s%s%s" % (keyfmt, mq, model, mq)]
+            parts = [*extras, "%s: %s%s%s" % (keyfmt, mq, model, mq)]
             rng.shuffle(parts)
             return "agent(%s, { %s })" % (pstr, ", ".join(parts))
         shape = rng.choice(["opts", "opts", "noarg", "empty"])
@@ -734,9 +815,12 @@ class FuzzInvariantTests(HookTestCase):
             script = self._script(rng, modeled=False)
             with self.subTest(i=i, script=script):
                 res = run_hook(workflow_script(script))
-                self.assertEqual(res.decision, "deny",
-                                 "model-less script must deny:\n%s\n(reason=%r)"
-                                 % (script, res.reason))
+                self.assertEqual(
+                    res.decision,
+                    "deny",
+                    "model-less script must deny:\n%s\n(reason=%r)"
+                    % (script, res.reason),
+                )
 
     def test_modeled_variants_always_abstain(self):
         rng = random.Random(self.SEED ^ 0x9999)
@@ -744,9 +828,12 @@ class FuzzInvariantTests(HookTestCase):
             script = self._script(rng, modeled=True)
             with self.subTest(i=i, script=script):
                 res = run_hook(workflow_script(script))
-                self.assertEqual(res.decision, "abstain",
-                                 "fully-modeled script must abstain:\n%s\n"
-                                 "(reason=%r)" % (script, res.reason))
+                self.assertEqual(
+                    res.decision,
+                    "abstain",
+                    "fully-modeled script must abstain:\n%s\n"
+                    "(reason=%r)" % (script, res.reason),
+                )
 
 
 if __name__ == "__main__":

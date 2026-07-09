@@ -140,10 +140,17 @@ class LintError(Exception):
 
 # ---- output helpers -----------------------------------------------------
 def _emit(decision, reason):
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": decision,
-        "permissionDecisionReason": reason}}))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": decision,
+                    "permissionDecisionReason": reason,
+                }
+            }
+        )
+    )
     sys.exit(0)
 
 
@@ -180,10 +187,23 @@ def abstain():
 # _division_ambiguity net still guards the quote-bearing adversarial form). A
 # genuine regex right after one of these words is rare and, unless it carries an
 # unbalanced quote, still lints cleanly.
-_REGEX_KEYWORDS = frozenset({
-    "return", "typeof", "instanceof", "in", "new", "delete", "void",
-    "throw", "case", "do", "else", "default", "extends",
-})
+_REGEX_KEYWORDS = frozenset(
+    {
+        "return",
+        "typeof",
+        "instanceof",
+        "in",
+        "new",
+        "delete",
+        "void",
+        "throw",
+        "case",
+        "do",
+        "else",
+        "default",
+        "extends",
+    }
+)
 
 
 class Tok:
@@ -201,7 +221,11 @@ class Tok:
     interps: only set on a template token: the list of token-lists, one per
              ${...} interpolation, so calls inside interpolations are lintable.
     """
-    __slots__ = ("type", "text", "start", "end", "kind", "interps")
+
+    # __slots__ deliberately mirror the __init__ parameter order
+    # (type/text/start/end/kind/interps); that reads clearer here than the
+    # alphabetical order RUF023 wants.
+    __slots__ = ("type", "text", "start", "end", "kind", "interps")  # noqa: RUF023
 
     def __init__(self, type, text, start, end, kind=None, interps=None):
         self.type = type
@@ -350,21 +374,21 @@ def _slash_context(prev):
     a '}' or ')' is rare and, unless it carries an unbalanced quote, still lexes
     to harmless tokens."""
     if prev is None:
-        return "regex"                       # start of input
+        return "regex"  # start of input
     t = prev.type
     if t in ("num", "str", "regex", "template"):
-        return "div"                         # a value that ends an expression
+        return "div"  # a value that ends an expression
     if t == "name":
         if prev.kind == "member":
-            return "div"                     # obj.<keyword> is a property value
+            return "div"  # obj.<keyword> is a property value
         return "regex" if prev.text in _REGEX_KEYWORDS else "div"
     # punctuator
     p = prev.text
     if p in (")", "]", "}"):
-        return "div"                         # a call / group / member / close
+        return "div"  # a call / group / member / close
     if p in ("++", "--"):
-        return "div"                         # postfix update ends an expression
-    return "regex"                           # any other operator / punctuator
+        return "div"  # postfix update ends an expression
+    return "regex"  # any other operator / punctuator
 
 
 def _read_template(s, i):
@@ -384,7 +408,7 @@ def _read_template(s, i):
         if c == "$" and j + 1 < n and s[j + 1] == "{":
             sub, close = _lex(s, j + 2, interp=True)
             interps.append(sub)
-            j = close + 1                    # step past the interpolation's '}'
+            j = close + 1  # step past the interpolation's '}'
             continue
         j += 1
     raise LintError("unterminated template literal")
@@ -404,7 +428,7 @@ def _lex(s, start, interp=False):
     i = 0 if start is None else start
     n = len(s)
     prev = None
-    brace_depth = 0                          # tracks '{' depth for interp exit
+    brace_depth = 0  # tracks '{' depth for interp exit
 
     def push(tok):
         tokens.append(tok)
@@ -449,7 +473,8 @@ def _lex(s, start, interp=False):
                 raise LintError(
                     "ambiguous '/': reads as both division and a quote-bearing "
                     "regex literal, so agent()/workflow() calls around it cannot "
-                    "be safely verified")
+                    "be safely verified"
+                )
             if i + 1 < n and s[i + 1] == "=":
                 prev = push(Tok("punct", "/=", i, i + 2))
                 i += 2
@@ -468,10 +493,8 @@ def _lex(s, start, interp=False):
             j = i + 1
             while j < n and _wordchar(s[j]):
                 j += 1
-            member = (prev is not None and prev.type == "punct"
-                      and prev.text == ".")
-            prev = push(Tok("name", s[i:j], i, j,
-                            kind="member" if member else None))
+            member = prev is not None and prev.type == "punct" and prev.text == "."
+            prev = push(Tok("name", s[i:j], i, j, kind="member" if member else None))
             i = j
             continue
         # braces: track depth so an interpolation ends at its unmatched '}'
@@ -483,7 +506,7 @@ def _lex(s, start, interp=False):
         if c == "}":
             if brace_depth == 0:
                 if interp:
-                    return tokens, i         # closes the enclosing ${...}
+                    return tokens, i  # closes the enclosing ${...}
                 # stray top-level close: tolerate (cannot hide a call)
                 prev = push(Tok("punct", "}", i, i + 1))
                 i += 1
@@ -505,9 +528,10 @@ def _lex(s, start, interp=False):
         if c == "\\":
             raise LintError(
                 "stray backslash outside a string / regex / template; a "
-                "unicode-escaped identifier cannot be statically verified")
+                "unicode-escaped identifier cannot be statically verified"
+            )
         # multi-char punctuators that affect slash classification
-        two = s[i:i + 2]
+        two = s[i : i + 2]
         if two in ("++", "--", "=>"):
             prev = push(Tok("punct", two, i, i + 2))
             i += 2
@@ -638,7 +662,7 @@ def _object_model(opts):
     if not opts or not (opts[0].type == "punct" and opts[0].text == "{"):
         return (False, None)
     close = _match_brace(opts, 0)
-    prev = opts[0]                           # the opening '{'
+    prev = opts[0]  # the opening '{'
     depth = 0
     k = 1
     while k < close:
@@ -653,11 +677,16 @@ def _object_model(opts):
             prev = t
             k += 1
             continue
-        if (depth == 0 and _is_model_key(t)
-                and prev.type == "punct" and prev.text in ("{", ",")):
-            if (k + 1 < close and opts[k + 1].type == "punct"
-                    and opts[k + 1].text == ":"):
-                return (True, _extract_value(opts, k + 2, close))
+        if (
+            depth == 0
+            and _is_model_key(t)
+            and prev.type == "punct"
+            and prev.text in ("{", ",")
+            and k + 1 < close
+            and opts[k + 1].type == "punct"
+            and opts[k + 1].text == ":"
+        ):
+            return (True, _extract_value(opts, k + 2, close))
         prev = t
         k += 1
     return (False, None)
@@ -674,16 +703,16 @@ def _literal_string(value_tokens):
     if t.type == "str":
         return _str_inner(t.text)
     if t.type == "template" and not t.interps:
-        return t.text[1:-1]                  # strip backticks
+        return t.text[1:-1]  # strip backticks
     return None
 
 
 def _classify_model_value(value_tokens):
     """Classify a top-level model key's value. Returns:
-      ("banned", display) - a literal naming a BANNED_MODELS entry,
-      ("blank",  "")      - a literal that is empty / all whitespace,
-      ("ok",     None)    - a valid literal, OR a non-literal (dynamic) value the
-                            static lint cannot resolve (treated as satisfying)."""
+    ("banned", display) - a literal naming a BANNED_MODELS entry,
+    ("blank",  "")      - a literal that is empty / all whitespace,
+    ("ok",     None)    - a valid literal, OR a non-literal (dynamic) value the
+                          static lint cannot resolve (treated as satisfying)."""
     lit = _literal_string(value_tokens)
     if lit is None:
         return ("ok", None)
@@ -704,22 +733,26 @@ def _lint_call(tokens, name_i, open_i, close_i, raw, problems):
     if len(args) < 2 or not args[1]:
         problems.append(
             "agent() call has no options object (second argument), so no "
-            "explicit model can be set -> %s" % snip)
+            "explicit model can be set -> %s" % snip
+        )
         return
     present, value_tokens = _object_model(args[1])
     if not present:
         problems.append(
-            "agent() options object has no top-level model: key -> %s" % snip)
+            "agent() options object has no top-level model: key -> %s" % snip
+        )
         return
     status, disp = _classify_model_value(value_tokens)
     if status == "banned":
         problems.append(
             "agent() options pin a banned model %r; it must be one of %s -> %s"
-            % (disp, VALID_CHOICES_STR, snip))
+            % (disp, VALID_CHOICES_STR, snip)
+        )
     elif status == "blank":
         problems.append(
             "agent() options set a blank model; it must be one of %s -> %s"
-            % (VALID_CHOICES_STR, snip))
+            % (VALID_CHOICES_STR, snip)
+        )
 
 
 def _lint_tokens(tokens, raw, problems):
@@ -739,19 +772,24 @@ def _lint_tokens(tokens, raw, problems):
         if tok.type != "name" or tok.text not in ("agent", "workflow"):
             continue
         prevtok = tokens[i - 1] if i > 0 else None
-        if prevtok is not None and prevtok.type == "punct" \
-                and prevtok.text in (".", "?."):
-            continue                         # member access: obj.agent(...)
-        if not (i + 1 < n and tokens[i + 1].type == "punct"
-                and tokens[i + 1].text == "("):
-            continue                         # not a call
+        if (
+            prevtok is not None
+            and prevtok.type == "punct"
+            and prevtok.text in (".", "?.")
+        ):
+            continue  # member access: obj.agent(...)
+        if not (
+            i + 1 < n and tokens[i + 1].type == "punct" and tokens[i + 1].text == "("
+        ):
+            continue  # not a call
         open_i = i + 1
         close_i = _match_paren(tokens, open_i)
         if tok.text == "workflow":
             problems.append(
                 "nested workflow() call cannot be statically verified for "
                 "explicit per-agent models -> %s"
-                % _snippet(raw, tok.start, tokens[close_i].end))
+                % _snippet(raw, tok.start, tokens[close_i].end)
+            )
             continue
         _lint_call(tokens, i, open_i, close_i, raw, problems)
 
@@ -768,8 +806,7 @@ def lint_workflow(script):
 # =========================================================================
 # frontmatter pin lookup
 # =========================================================================
-_FM_MODEL_RE = re.compile(
-    r"(?im)^\s*model\s*:\s*[\"']?([A-Za-z0-9._\[\]-]+)")
+_FM_MODEL_RE = re.compile(r"(?im)^\s*model\s*:\s*[\"']?([A-Za-z0-9._\[\]-]+)")
 
 
 def _read_frontmatter_model(path):
@@ -798,15 +835,16 @@ def frontmatter_model(cwd, subagent_type):
     d = os.path.abspath(cwd or ".")
     candidates = []
     while True:
-        candidates.append(
-            os.path.join(d, ".claude", "agents", subagent_type + ".md"))
+        candidates.append(os.path.join(d, ".claude", "agents", subagent_type + ".md"))
         parent = os.path.dirname(d)
         if parent == d:
             break
         d = parent
     candidates.append(
-        os.path.join(os.path.expanduser("~"), ".claude", "agents",
-                     subagent_type + ".md"))
+        os.path.join(
+            os.path.expanduser("~"), ".claude", "agents", subagent_type + ".md"
+        )
+    )
     for p in candidates:
         pinned = _read_frontmatter_model(p)
         if pinned:
@@ -822,10 +860,12 @@ def handle_agent(ti, cwd):
     if isinstance(model, str) and model.strip():
         norm = model.strip().lower()
         if norm in BANNED_MODELS:
-            deny("Model %r is banned for subagents: it lets the agent inherit "
-                 "or silently downgrade instead of running a model chosen for "
-                 "the task. Re-issue the Agent call with an explicit model "
-                 "(one of %s)." % (model.strip(), VALID_CHOICES_STR))
+            deny(
+                "Model %r is banned for subagents: it lets the agent inherit "
+                "or silently downgrade instead of running a model chosen for "
+                "the task. Re-issue the Agent call with an explicit model "
+                "(one of %s)." % (model.strip(), VALID_CHOICES_STR)
+            )
         abstain()  # explicit, allowed model -> proceed
     # model omitted or blank
     if ALLOW_FRONTMATTER_PIN:
@@ -833,13 +873,17 @@ def handle_agent(ti, cwd):
         pinned = frontmatter_model(cwd, st)
         if pinned:
             if pinned.strip().lower() in BANNED_MODELS:
-                deny("subagent_type %r pins a banned model %r in its "
-                     "frontmatter. Set an explicit model at the call site "
-                     "(one of %s)." % (st, pinned, VALID_CHOICES_STR))
+                deny(
+                    "subagent_type %r pins a banned model %r in its "
+                    "frontmatter. Set an explicit model at the call site "
+                    "(one of %s)." % (st, pinned, VALID_CHOICES_STR)
+                )
             abstain()  # a frontmatter pin is an explicit per-task choice
-    deny("This subagent spawn omits an explicit `model`, so it would silently "
-         "inherit the parent session's model. Re-issue the Agent call with an "
-         "explicit model parameter (one of %s)." % VALID_CHOICES_STR)
+    deny(
+        "This subagent spawn omits an explicit `model`, so it would silently "
+        "inherit the parent session's model. Re-issue the Agent call with an "
+        "explicit model parameter (one of %s)." % VALID_CHOICES_STR
+    )
 
 
 def handle_workflow(ti, cwd):
@@ -852,34 +896,43 @@ def handle_workflow(ti, cwd):
                 with open(path, encoding="utf-8") as f:
                     script = f.read()
             except OSError as e:
-                deny("Workflow scriptPath %r could not be read to verify "
-                     "explicit per-agent models (%s). Pass the script inline "
-                     "so every agent() model can be checked." % (sp, e))
+                deny(
+                    "Workflow scriptPath %r could not be read to verify "
+                    "explicit per-agent models (%s). Pass the script inline "
+                    "so every agent() model can be checked." % (sp, e)
+                )
         elif ti.get("name") is not None or ti.get("resumeFromRunId") is not None:
-            msg = ("This workflow is invoked by name / resume id, so its saved "
-                   "script cannot be statically inspected for explicit "
-                   "per-agent models. Approve only if you trust it; otherwise "
-                   "re-invoke Workflow with an inline `script` whose every "
-                   "agent() call sets a top-level model:.")
+            msg = (
+                "This workflow is invoked by name / resume id, so its saved "
+                "script cannot be statically inspected for explicit "
+                "per-agent models. Approve only if you trust it; otherwise "
+                "re-invoke Workflow with an inline `script` whose every "
+                "agent() call sets a top-level model:."
+            )
             if STRICT_SAVED_WORKFLOWS:
                 deny(msg + " (STRICT_SAVED_WORKFLOWS is on, so it is denied.)")
             ask(msg)
         else:
-            deny("Workflow payload has none of script / scriptPath / name; "
-                 "nothing can be statically verified, so it is denied.")
+            deny(
+                "Workflow payload has none of script / scriptPath / name; "
+                "nothing can be statically verified, so it is denied."
+            )
     try:
         problems = lint_workflow(script)
     except LintError as e:
-        deny("Workflow script could not be safely parsed (%s), so its agent() "
-             "spawns cannot be verified. Ensure strings, parentheses and braces "
-             "are balanced and give every agent() an explicit top-level model:."
-             % e)
+        deny(
+            "Workflow script could not be safely parsed (%s), so its agent() "
+            "spawns cannot be verified. Ensure strings, parentheses and braces "
+            "are balanced and give every agent() an explicit top-level model:." % e
+        )
         return
     if problems:
-        deny("Every agent() a workflow spawns must pass a top-level model: in "
-             "its options object (one of %s). Problems found:\n- %s\nRewrite "
-             "each as agent(prompt, { model: 'opus'|'sonnet'|'haiku', ... })."
-             % (VALID_CHOICES_STR, "\n- ".join(problems)))
+        deny(
+            "Every agent() a workflow spawns must pass a top-level model: in "
+            "its options object (one of %s). Problems found:\n- %s\nRewrite "
+            "each as agent(prompt, { model: 'opus'|'sonnet'|'haiku', ... })."
+            % (VALID_CHOICES_STR, "\n- ".join(problems))
+        )
     abstain()  # clean
 
 

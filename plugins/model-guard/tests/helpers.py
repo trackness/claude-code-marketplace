@@ -18,6 +18,7 @@ This module is the single point of contact with that contract:
 
 stdlib only; python3 >= 3.9.
 """
+
 import json
 import os
 import subprocess
@@ -26,7 +27,9 @@ import unittest
 from collections import namedtuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPT = os.path.abspath(os.path.join(HERE, "..", "scripts", "enforce_explicit_model.py"))
+SCRIPT = os.path.abspath(
+    os.path.join(HERE, "..", "scripts", "enforce_explicit_model.py")
+)
 
 # decision:  'abstain' (no stdout) | 'deny' | 'ask' | 'allow'
 # reason:    permissionDecisionReason, or '' when abstaining
@@ -56,9 +59,12 @@ def run_hook(payload, env=None, cwd=None):
         text=True,
         env=full_env,
         cwd=cwd,
+        check=False,  # returncode is asserted explicitly just below
     )
-    assert p.returncode == 0, (
-        "hook must always exit 0, got %r (stderr=%r)" % (p.returncode, p.stderr))
+    assert p.returncode == 0, "hook must always exit 0, got %r (stderr=%r)" % (
+        p.returncode,
+        p.stderr,
+    )
     out = p.stdout.strip()
     if not out:
         return HookResult("abstain", "", p.returncode, p.stdout, p.stderr)
@@ -68,7 +74,10 @@ def run_hook(payload, env=None, cwd=None):
     return HookResult(
         hso["permissionDecision"],
         hso.get("permissionDecisionReason", ""),
-        p.returncode, p.stdout, p.stderr)
+        p.returncode,
+        p.stdout,
+        p.stderr,
+    )
 
 
 # ---- payload builders ---------------------------------------------------
@@ -113,41 +122,49 @@ class HookTestCase(unittest.TestCase):
     message surfaces the actual reason (and stderr) to make red tests legible.
     """
 
-    def assert_deny(self, payload, reason_substring=None, env=None, cwd=None,
-                    msg=None):
+    def assert_deny(self, payload, reason_substring=None, env=None, cwd=None, msg=None):
         res = run_hook(payload, env=env, cwd=cwd)
-        self.assertEqual(res.decision, "deny",
-                         msg or "expected deny; reason=%r stderr=%r"
-                         % (res.reason, res.stderr))
+        self.assertEqual(
+            res.decision,
+            "deny",
+            msg or "expected deny; reason=%r stderr=%r" % (res.reason, res.stderr),
+        )
         if reason_substring is not None:
             self.assertIn(reason_substring, res.reason, msg)
         return res
 
-    def assert_ask(self, payload, reason_substring=None, env=None, cwd=None,
-                   msg=None):
+    def assert_ask(self, payload, reason_substring=None, env=None, cwd=None, msg=None):
         res = run_hook(payload, env=env, cwd=cwd)
-        self.assertEqual(res.decision, "ask",
-                         msg or "expected ask; reason=%r stderr=%r"
-                         % (res.reason, res.stderr))
+        self.assertEqual(
+            res.decision,
+            "ask",
+            msg or "expected ask; reason=%r stderr=%r" % (res.reason, res.stderr),
+        )
         if reason_substring is not None:
             self.assertIn(reason_substring, res.reason, msg)
         return res
 
     def assert_abstain(self, payload, env=None, cwd=None, msg=None):
         res = run_hook(payload, env=env, cwd=cwd)
-        self.assertEqual(res.decision, "abstain",
-                         msg or "expected abstain; decision=%r reason=%r stderr=%r"
-                         % (res.decision, res.reason, res.stderr))
+        self.assertEqual(
+            res.decision,
+            "abstain",
+            msg
+            or "expected abstain; decision=%r reason=%r stderr=%r"
+            % (res.decision, res.reason, res.stderr),
+        )
         return res
 
     # -- Workflow-script shorthands (most lexer/lint tests are script-driven) --
     def wf_deny(self, script, reason_substring=None, msg=None):
-        return self.assert_deny(workflow_script(script), reason_substring,
-                                msg=msg or script)
+        return self.assert_deny(
+            workflow_script(script), reason_substring, msg=msg or script
+        )
 
     def wf_ask(self, script, reason_substring=None, msg=None):
-        return self.assert_ask(workflow_script(script), reason_substring,
-                               msg=msg or script)
+        return self.assert_ask(
+            workflow_script(script), reason_substring, msg=msg or script
+        )
 
     def wf_abstain(self, script, msg=None):
         return self.assert_abstain(workflow_script(script), msg=msg or script)

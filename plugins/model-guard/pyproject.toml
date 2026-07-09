@@ -1,0 +1,37 @@
+# Static-analysis config for the model-guard plugin.
+# Codifies the exact lint ruleset and the minimum supported runtime so
+# `ruff check plugins/model-guard` reproduces the reviewed clean state.
+# Scope: scripts/enforce_explicit_model.py (a hand-rolled ECMAScript lexer +
+# lint) and its tests/. Correctness-preserving clarity outranks rule appeasement
+# here, so a handful of rules that fight this file's nature are switched off with
+# a stated reason rather than papered over by restructuring working code.
+
+[tool.ruff]
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "RET", "ARG", "PL", "RUF"]
+ignore = [
+    # printf %-formatting is kept deliberately across the plugin: the deny /
+    # problem message templates and the JS-source test fixtures read clearly in
+    # printf form, and several embed literal { } braces an f-string would force
+    # us to escape — a low-value modernization not worth reflowing these
+    # security-message string literals.
+    "UP031",
+    # "magic value" comparisons here are structural lexer index/length literals
+    # (len(args) < 2, k + 2, ...) and seeded-fuzz probabilities (rng.random() <
+    # 0.5), not domain constants that naming would clarify.
+    "PLR2004",
+    # return-count metric: _slash_context is a flat token-context classifier;
+    # one early return per case is the clearest shape, not a design smell.
+    "PLR0911",
+    # branch-count metric: _lex is a character-level tokenizer — a single
+    # branchy state machine is its natural, correct form; splitting to hit the
+    # threshold would reduce readability.
+    "PLR0912",
+    # statement-count metric: same _lex tokenizer loop as PLR0912.
+    "PLR0915",
+    # argument-count metric: Tok.__init__ and _lint_call carry positional token
+    # data (type/text/offsets/indices), not an over-parameterized interface.
+    "PLR0913",
+]
