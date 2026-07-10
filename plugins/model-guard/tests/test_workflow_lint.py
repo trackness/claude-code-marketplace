@@ -179,10 +179,58 @@ class LintSemanticsTests(HookTestCase):
         # it is treated as satisfying presence, not denied (documented).
         self.wf_abstain("agent('x', { model: chosenModel });")
 
+    def test_escaped_model_value_denies(self):
+        r"""A JS string / template escape in the model value folds to a banned
+        model at runtime (e.g. 'fabl\x65' === 'fable'); the raw source never
+        equals it, so the value must fail closed rather than classify 'ok'."""
+        for opts in (
+            r"{ model: 'fabl\x65' }",
+            r"{ model: '\x66able' }",
+            r"{ model: '\x66\x61\x62\x6c\x65' }",
+            r"{ model: 'fabl\u{65}' }",
+            r"{ model: 'i\x6eherit' }",
+            r"{ model: `fabl\x65` }",
+        ):
+            with self.subTest(opts=opts):
+                self.wf_deny(
+                    f"agent('t', {opts});", reason_substring="plain string literal"
+                )
+
+    def test_concatenated_model_value_denies(self):
+        """A '+'-concatenation of string literals folds to a banned model
+        ('fa' + 'ble' === 'fable') yet is no single literal -> fail closed."""
+        for opts in ("{ model: 'fa' + 'ble' }", "{ model: 'in' + 'herit' }"):
+            with self.subTest(opts=opts):
+                self.wf_deny(
+                    f"agent('t', {opts});", reason_substring="plain string literal"
+                )
+
+    def test_static_interpolation_model_value_denies(self):
+        """A template that interpolates string literals folds to a banned model
+        (`fa${''}ble` === 'fable') yet is not a plain literal -> fail closed."""
+        self.wf_deny(
+            "agent('t', { model: `fa${''}ble` });",
+            reason_substring="plain string literal",
+        )
+
+    def test_string_bearing_dynamic_value_denies(self):
+        """The tightened boundary: any string-token-bearing model expression that
+        is not one plain literal (here a ternary / a `||` default) fails closed,
+        since a literal branch could be the banned model."""
+        for opts in (
+            "{ model: cond ? 'opus' : 'fable' }",
+            "{ model: chosen || 'fable' }",
+        ):
+            with self.subTest(opts=opts):
+                self.wf_deny(
+                    f"agent('t', {opts});", reason_substring="plain string literal"
+                )
+
     def test_blank_literal_values_deny(self):
         """An empty or whitespace-only literal model value denies as blank."""
-        # Raw inner text (no unescaping): only truly empty/whitespace literals
-        # are blank -- "\t" here is the two literal chars backslash-t (non-blank).
+        # Only truly empty / whitespace PLAIN literals classify as blank; an
+        # escaped literal (e.g. '\t') never reaches here -- it fails closed on
+        # its backslash first (see test_escaped_model_value_denies).
         for opts in (
             "{ model: '' }",
             '{ model: "" }',

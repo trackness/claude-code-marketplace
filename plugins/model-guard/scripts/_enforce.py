@@ -523,7 +523,7 @@ def _simple_key(tokens, elo, ehi):
     if key.type == "name":
         name = key.text
     elif key.type == "str" and "\\" not in key.text:
-        name = _str_inner(key.text)
+        name = key.text[1:-1]  # escape-free quoted key: strip its quotes
     else:
         raise LintError("computed or escaped options key cannot be verified")
     if name == "__proto__":
@@ -549,17 +549,24 @@ def _classify_model_value(ctx, value_range):
 
 
 def _literal_string(ctx, value_range):
-    """If the (lo, hi) value range is exactly one string literal, or a backtick
-    template with no interpolation, return its inner text; else None (identifier,
-    call, concatenation, interpolated template -> not statically resolvable)."""
+    """Inner text of a model value that is exactly ONE plain (escape-free) string
+    / non-interpolated-template literal; None when it carries no string / template
+    token at all (a bare identifier / call, treated as satisfying). FAIL CLOSED
+    (LintError -> deny) on any OTHER string-bearing value -- an escape,
+    concatenation, ternary, or interpolation can statically mask a banned model,
+    and a real model name needs none of them."""
     lo, hi = value_range
-    if hi - lo != 1:
-        return None
-    t = ctx.tokens[lo]
-    if t.type == "str":
-        return _str_inner(t.text)
-    if t.type == "template" and not t.interps:
-        return t.text[1:-1]  # strip backticks
+    if (
+        hi - lo == 1
+        and "\\" not in (t := ctx.tokens[lo]).text
+        and (t.type == "str" or (t.type == "template" and not t.interps))
+    ):
+        return t.text[1:-1]  # strip quotes / backticks
+    if any(ctx.tokens[k].type in ("str", "template") for k in range(lo, hi)):
+        raise LintError(
+            "model value is not one plain string literal (an escape, "
+            "concatenation, ternary, or interpolation can mask a banned model)"
+        )
     return None
 
 
@@ -612,12 +619,6 @@ def _snippet(raw, start, end):
     first-120 chars as the full span for any realistically-spaced call."""
     stop = min(end, start + _SNIPPET_SCAN)
     return re.sub(r"\s+", " ", raw[start:stop]).strip()[:120]
-
-
-def _str_inner(text):
-    """Inner text of a '...' / "..." token (raw, no unescaping -- model names
-    carry no escapes)."""
-    return text[1:-1]
 
 
 # ---- ECMAScript lexer ----
