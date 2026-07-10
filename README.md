@@ -37,4 +37,4 @@ Denies `Agent`/`Task`/`Workflow` spawns that omit an explicit `model`, and bans 
 - **1 enforcement hook** — `PreToolUse` hook on `Agent|Task|Workflow` that denies spawns without an explicit, non-banned model
 
 **Requirements:**
-- `python3` (standard library only)
+- Python 3.14+ (standard library only). On an older `python3` the hook fails closed — it denies every `Agent`/`Task`/`Workflow` spawn until a 3.14+ interpreter is used.

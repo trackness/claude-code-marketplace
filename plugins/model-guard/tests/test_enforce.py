@@ -201,6 +201,27 @@ class FrontmatterPinTests(HookTestCase):
                         reason_substring="model",
                     )
 
+    def test_non_utf8_frontmatter_denies_without_crash(self):
+        """An agent .md whose frontmatter carries non-UTF-8 bytes must not crash
+        the hook: reading it raises UnicodeDecodeError (a ValueError), which is
+        caught so the unresolved pin falls through to the omitted-model deny
+        rather than aborting the process (which would fail OPEN). HOME is pointed
+        at an empty dir and the type name is unique so no other pin can resolve."""
+        type_name = "mg_nonutf8_pin_zzz"
+        with (
+            tempfile.TemporaryDirectory() as home,
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            agents_dir = os.path.join(tmp, ".claude", "agents")
+            os.makedirs(agents_dir)
+            with open(os.path.join(agents_dir, type_name + ".md"), "wb") as f:
+                f.write(b"---\nname: x\nmodel: \xffopus\n---\nBody.\n")
+            self.assert_deny(
+                agent_payload({"subagent_type": type_name}, cwd=tmp),
+                reason_substring="model",
+                env={"HOME": home},
+            )
+
     def test_explicit_call_model_checked_before_pin(self):
         """A banned call-site model denies even when a valid pin exists: a pin
         never rescues an explicitly banned call-site model."""
@@ -282,6 +303,16 @@ class WorkflowShapeTests(HookTestCase):
         """An unreadable scriptPath denies (fail-closed)."""
         with tempfile.TemporaryDirectory() as tmp:
             self.assert_deny(workflow_payload({"scriptPath": "missing.js"}, cwd=tmp))
+
+    def test_scriptpath_non_utf8_denies_without_crash(self):
+        """A scriptPath whose bytes are not valid UTF-8 fails closed -> deny. The
+        read raises UnicodeDecodeError (a ValueError); it must be caught, not
+        crash the hook to empty stdout / a non-zero exit (which would fail OPEN).
+        run_hook asserts exit 0, so a crash here surfaces as a hard failure."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "wf.js"), "wb") as f:
+                f.write(b"agent('x', { temperature: 1 });\xff")
+            self.assert_deny(workflow_payload({"scriptPath": "wf.js"}, cwd=tmp))
 
     def test_inline_script_clean_abstains(self):
         """A clean inline script abstains."""
@@ -585,6 +616,36 @@ class LintSemanticsTests(HookTestCase):
             "agent('the-bad-one', { model: 'fable' });\n",
             reason_substring="the-bad-one",
         )
+
+
+# =========================================================================
+# optional-call spawns: agent?.(...) / workflow?.(...) are real spawns
+# =========================================================================
+class OptionalCallTests(HookTestCase):
+    """The optional-call form `agent?.(...)` lexes as the name then '?' '.' '(',
+    not name-then-'(', so the call detector must recognise it or a syntactically
+    valid, runtime-executable spawn slips past every model / banned / nested-
+    workflow check. These pin that it is linted exactly like `agent(...)`, that
+    optional MEMBER access `obj?.agent(...)` stays excluded, and that a bare
+    `agent ? a : b` ternary is not mistaken for a call."""
+
+    def test_optional_call_spawns_are_linted(self):
+        """`agent?.(...)` is linted like `agent(...)`: model-less and banned deny,
+        a valid model abstains; `workflow?.(...)` is a nested workflow -> deny."""
+        self.wf_deny("agent?.('x', { temperature: 1 });", reason_substring="model")
+        self.wf_deny("agent?.('x', { model: 'fable' });", reason_substring="banned")
+        self.wf_abstain("agent?.('x', { model: 'opus' });")
+        self.assert_deny(
+            workflow_script("workflow?.('other');"), reason_substring="workflow"
+        )
+
+    def test_optional_member_call_not_matched(self):
+        """obj?.agent(...) is optional member access, not the DSL agent -> abstain."""
+        self.wf_abstain("obj?.agent('x');")
+
+    def test_agent_ternary_is_not_a_call(self):
+        """A bare `agent ? a : b` ternary is not a spawn (no '.(' after '?')."""
+        self.wf_abstain("const z = agent ? a : b;")
 
 
 # =========================================================================
