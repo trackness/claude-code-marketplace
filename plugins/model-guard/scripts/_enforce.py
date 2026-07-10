@@ -212,20 +212,22 @@ def frontmatter_model(cwd, subagent_type):
 
 
 def _read_frontmatter_model(path):
-    """Return the `model:` pinned in `path`'s YAML frontmatter, else None. Only
-    the leading `--- ... ---` block is searched; an unreadable file is None."""
+    """Return the `model:` pinned in `path`'s well-formed leading YAML frontmatter
+    block (first line `---`, closed by a later `---`), else None. Body prose, an
+    unclosed `---`, and a >1-`model:` block (ambiguous: YAML keeps the last, a
+    first-wins read the first) each yield no pin; unreadable / non-UTF-8 is None."""
     try:
         with open(path, encoding="utf-8") as f:
             head = f.read(8192)
     except OSError, ValueError:  # ValueError: NUL in path / non-UTF-8 (fail-closed)
         return None
-    fm = head
-    if head.startswith("---"):
-        end = head.find("\n---", 3)
-        if end != -1:
-            fm = head[:end]
-    m = _FM_MODEL_RE.search(fm)
-    return m.group(1) if m else None
+    lines = head.split("\n")
+    ends = [i for i in range(1, len(lines)) if lines[i].rstrip() == "---"]
+    if lines[0].rstrip() != "---" or not ends:  # no well-formed leading block
+        return None
+    end = ends[0]  # first closing '---'; body after it is never a pin source
+    matches = _FM_MODEL_RE.findall("\n".join(lines[1:end]))
+    return matches[0] if len(matches) == 1 else None  # 0 or >1 keys -> no pin
 
 
 # ---- Workflow policy ----
@@ -491,19 +493,21 @@ def _lint_call(ctx, name_i, open_i, close_i):
 
 
 def _object_model(ctx, opts):
-    """opts is the (lo, hi) token range of an agent() call's second argument.
-    Return (present, value_range): present iff opts is a brace object literal with
-    a DEPTH-1 `model` entry in KEY position (a `model` nested deeper or in a value
-    position like `cond ? model : x` is not one). The matched entry's value range
-    (past its ':') is returned. An opener whose '}' does not close inside opts
-    raises LintError (fail-closed, as the old per-slice match did)."""
-    lo, _hi = opts
+    """opts is the (lo, hi) token range of an agent() call's second argument. Return
+    (present, value_range): present iff opts is a brace object literal with a DEPTH-1
+    `model` entry in KEY position (a `model` nested deeper or in a value position like
+    `cond ? model : x` is not one); value_range is its value (past ':'). A SECOND
+    top-level `model` key raises LintError -> deny (fail-closed): JS keeps the LAST
+    duplicate, so a first-wins read of `{model:'opus', model:'fable'}` clears 'opus'
+    while 'fable' runs. An opener whose '}' does not close inside opts raises too."""
     tokens = ctx.tokens
-    if not _opens_object(ctx, opts):
-        return False, None
+    lo, hi = opts
+    if not (lo < hi and tokens[lo].type == "punct" and tokens[lo].text == "{"):
+        return False, None  # not an object-literal opener
     close = ctx.cb[lo]
-    if close is None or close >= _hi:  # '{' not closed within this argument
+    if close is None or close >= hi:  # '{' not closed within this argument
         raise LintError("unbalanced braces")
+    value_range = None
     for elo, ehi in _top_level_ranges(ctx, lo + 1, close):
         key = tokens[elo]
         if (
@@ -512,14 +516,10 @@ def _object_model(ctx, opts):
             and tokens[elo + 1].type == "punct"
             and tokens[elo + 1].text == ":"
         ):
-            return True, (elo + 2, ehi)
-    return False, None
-
-
-def _opens_object(ctx, opts):
-    """True iff the token range begins with a '{' (an object literal opener)."""
-    lo, hi = opts
-    return lo < hi and ctx.tokens[lo].type == "punct" and ctx.tokens[lo].text == "{"
+            if value_range is not None:  # duplicate top-level model key
+                raise LintError("duplicate top-level model key")
+            value_range = (elo + 2, ehi)
+    return value_range is not None, value_range
 
 
 def _is_model_key(t):
@@ -907,10 +907,9 @@ def _read_paren(st):
 
 def _read_backslash(_st):
     """A bare backslash cannot legally appear outside a string / template / regex
-    (all consumed above); it can only be a \\uXXXX identifier escape JS folds into
-    an identifier char (so "\\u0061gent(...)" invokes `agent`), smuggling a call
-    whose escaped name never lexes to "agent"/"workflow". Fail closed. (``_st``
-    unused -- this handler only ever fails.)"""
+    (all consumed above); it can only be a \\uXXXX identifier escape JS folds into an
+    identifier char (so "\\u0061gent(...)" invokes `agent`), smuggling a call whose
+    escaped name never lexes to "agent"/"workflow". Fail closed. (``_st`` unused.)"""
     raise LintError(
         "stray backslash outside a string / regex / template; a "
         "unicode-escaped identifier cannot be statically verified"
