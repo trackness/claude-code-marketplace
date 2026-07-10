@@ -19,7 +19,7 @@ This lookup only covers filesystem agent definitions reachable from `cwd` upward
 
 The lint works on the script text submitted with the `Workflow` call (or read from `scriptPath`). It is fail-closed: anything the lint cannot positively verify — unterminated strings, unbalanced parentheses, nested `workflow()` calls, an unreadable `scriptPath`, or a payload carrying none of `script`/`scriptPath`/`name`/`resumeFromRunId` — is denied rather than allowed through.
 
-**Saved / bundled workflow invocations** (name-only or `resumeFromRunId`-only calls, e.g. resuming `/deep-research`, where the caller has no script text to rewrite) are not linted. These get `permissionDecision: "ask"` instead of an automatic deny, so the user gates them at runtime. Set `STRICT_SAVED_WORKFLOWS = True` in the script to flip this to a hard deny instead.
+**Saved / bundled workflow invocations** (name-only or `resumeFromRunId`-only calls, e.g. resuming `/deep-research`, where the caller has no script text to rewrite) are not linted. These get `permissionDecision: "ask"` instead of an automatic deny, so the user gates them at runtime. Set `STRICT_SAVED_WORKFLOWS = True` in `scripts/_enforce.py` (or set the `MODEL_GUARD_STRICT_SAVED_WORKFLOWS` env var to a truthy value) to flip this to a hard deny instead.
 
 **Known limitation, confirmed empirically:** `PreToolUse` does **not** fire for each `agent(...)` call *inside* a workflow at runtime — only the initial `Workflow` tool call is gated. Confirmed on Claude Code v2.1.205 (2026-07-09) via `claude --debug-file`: internal `agent()` spawns dispatch straight to the API (`source=agent:builtin:workflow-subagent`) inside an execution context with zero hooks registered (`Hooks: Found 0 total hooks in registry`), producing no `tool_dispatch` or `PreToolUse` entry for tool name `Agent`. The static lint performed at `Workflow` submission time is therefore the sole gate for workflow-internal model requirements; it is deliberately biased strict to compensate. If a later Claude Code version adds per-spawn runtime hooking of internal `agent()` calls, this hook will additionally catch those at the point they fire.
 
@@ -41,11 +41,11 @@ Then run `/reload-plugins` (or start a fresh session) so the hook is picked up.
 
 ## Configuration
 
-Edit the constants at the top of `scripts/enforce_explicit_model.py`:
+Edit the constants near the top of `scripts/_enforce.py` (the enforcement core; `scripts/enforce_explicit_model.py` is only the interpreter-version guard that hands off to it):
 
 - `BANNED_MODELS` — set of model names that are rejected even when explicitly named (default: `{"fable", "inherit"}`).
 - `ALLOW_FRONTMATTER_PIN` — set to `False` to disable the frontmatter-pin exception entirely and require every spawn to name a model explicitly, even when the subagent type has a pinned model.
-- `STRICT_SAVED_WORKFLOWS` — set to `True` to make name-only / `resumeFromRunId`-only `Workflow` calls deny outright instead of prompting the user with `ask`.
+- `STRICT_SAVED_WORKFLOWS` — set to `True` to make name-only / `resumeFromRunId`-only `Workflow` calls deny outright instead of prompting the user with `ask`. It also honours the `MODEL_GUARD_STRICT_SAVED_WORKFLOWS` env var.
 
 ## Requirements
 

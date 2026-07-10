@@ -4,16 +4,14 @@ r"""PreToolUse enforcement logic (the 3.14-only core the sibling
 version): every subagent / workflow spawn must name an explicit, allowed model.
 
 WHY. An omitted model silently inherits the parent session's model; a banned
-model (fable / inherit) defeats the "a model chosen for its task" rule. The
-hook denies via the PreToolUse permissionDecision schema so the block holds
-even under bypassPermissions, and the reason is fed back so the model retries
-with an explicit model in the same turn.
+model (fable / inherit) defeats the "a model chosen for its task" rule. The hook
+denies via the PreToolUse permissionDecision schema so the block holds even under
+bypassPermissions, and the reason is fed back so the model retries in-turn.
 
-SHAPE. The whole program is one total function -- `decide(payload) -> Decision`
--- wrapped by a thin `main` that reads stdin, emits the decision, and exits 0.
-A Decision is deny / ask / abstain; only deny and ask print JSON, abstain is
-silent (normal permission flow proceeds). Deciding never touches stdout, so the
-policy stays a pure value computation and emission happens in exactly one place.
+SHAPE. The program is one total function -- `decide(payload) -> Decision` --
+wrapped by a thin `main` that reads stdin, emits the decision, and exits 0. A
+Decision is deny / ask / abstain; only deny and ask print JSON. Deciding never
+touches stdout, so the policy stays a pure value and emission is in one place.
 
 Tools handled (matcher "Agent|Task|Workflow"):
   Agent / Task : deny unless tool_input.model is an explicit non-banned model,
@@ -24,29 +22,22 @@ Tools handled (matcher "Agent|Task|Workflow"):
                  bundled workflows invoked by name or resume id cannot be
                  inspected -> "ask" (or deny under the strict env flag).
 
-LEXING MODEL. The workflow lint runs on a real ECMAScript token stream, not a
-raw-string scan, implementing the InputElementDiv / InputElementRegExp goal
-distinction via the standard PREVIOUS-SIGNIFICANT-TOKEN rule (as acorn/esprima
-do), because whether a '/' is division or a regex decides whether a following
-agent() call stays a visible token. _slash_context holds the full rule; in
-brief, a '/' is DIVISION after anything that ends an expression and a REGEX only
-where the grammar demands a fresh one, and '//' / '/*' are always comments.
+LEXING MODEL. The lint runs on a real ECMAScript token stream, implementing the
+InputElementDiv / InputElementRegExp distinction via the standard PREVIOUS-
+SIGNIFICANT-TOKEN rule (as acorn/esprima do), because whether a '/' is division
+or a regex decides whether a following agent() stays a visible token.
+_slash_context holds the rule; '//' / '/*' are always comments.
 
 FAIL-CLOSED GUARDS (fatal-direction preservation). Correct lexing of adversarial
 input can still hide a spawn, so two nets fail closed to a LintError -> deny:
-  * Quote-bearing ambiguity. `foo /a'/ agent('x', {t:1})` lexes with the agent(
-    swallowed inside a string. Every division-slash is rechecked
-    (_division_ambiguity): if it also admits a single-line regex reading whose
-    span carries an unbalanced quote / backtick, the two lexings disagree.
-  * Stray backslash. A bare '\' in the main stream is a \uXXXX identifier escape
-    (agent -> agent) whose escaped name never lexes to "agent"/"workflow".
+quote-bearing division/regex ambiguity (_division_ambiguity) and a stray '\'
+identifier escape. All downstream logic (call detection, argument splitting,
+depth-1 model key scan, value classification) operates on the token stream, over
+precomputed O(n) bracket indexes (see LintCtx) so the lint stays linear;
+template interpolations are tokenized recursively and linted independently.
 
-All downstream logic (call detection, argument splitting, depth-1 model key
-scan, value classification) operates on the token stream; template
-interpolations are tokenized recursively and linted independently.
-
-stdlib only; python3 >= 3.14. Unparsable stdin abstains (exit 0) so a
-malformed payload never wedges a session. The hook always exits 0.
+stdlib only; python3 >= 3.14. Unparsable stdin abstains (exit 0) so a malformed
+payload never wedges a session. The hook always exits 0.
 """
 
 import json
@@ -64,6 +55,9 @@ ALLOW_FRONTMATTER_PIN = True
 # An agent() spawn needs both a prompt and an options object; fewer top-level
 # arguments than this cannot carry a model: key.
 _MIN_AGENT_ARGS = 2
+
+# An object entry needs at least a key token and its ':' to be a `key:` binding.
+_MIN_ENTRY_TOKENS = 2
 
 
 def _env_flag(name, default=False):
@@ -84,9 +78,7 @@ class LintError(Exception):
     LintError maps to a deny (fail-closed)."""
 
 
-# =========================================================================
-# decision model + emission
-# =========================================================================
+# ---- decision model + emission ----
 @dataclass(frozen=True, slots=True)
 class Decision:
     """The hook's whole output: one of deny / ask / abstain. deny and ask carry
@@ -112,8 +104,7 @@ ABSTAIN = Decision("abstain")
 
 
 def emit(decision):
-    """Render a Decision to the PreToolUse contract. deny / ask print the
-    hookSpecificOutput JSON; abstain prints nothing."""
+    """Render a Decision: deny/ask print hookSpecificOutput JSON, abstain nothing."""
     if decision.kind == "abstain":
         return
     print(
@@ -129,9 +120,7 @@ def emit(decision):
     )
 
 
-# =========================================================================
-# entry point + dispatch
-# =========================================================================
+# ---- entry point + dispatch ----
 def main():
     """Read the PreToolUse payload on stdin, emit the decision, exit 0."""
     try:
@@ -160,9 +149,7 @@ def decide(payload):
     return ABSTAIN
 
 
-# =========================================================================
-# Agent / Task policy
-# =========================================================================
+# ---- Agent / Task policy ----
 def decide_agent(tool_input, cwd):
     """Enforce the Agent / Task model policy for one tool_input.
 
@@ -197,18 +184,15 @@ def decide_agent(tool_input, cwd):
     )
 
 
-# =========================================================================
-# frontmatter pin lookup
-# =========================================================================
+# ---- frontmatter pin lookup ----
 _FM_MODEL_RE = re.compile(r"(?im)^\s*model\s*:\s*[\"']?([A-Za-z0-9._\[\]-]+)")
 
 
 def frontmatter_model(cwd, subagent_type):
-    """Walk UP from cwd through every parent directory checking
-    <dir>/.claude/agents/<type>.md, then ~/.claude/agents/<type>.md. Return the
-    first pinned model found, else None. A subagent_type carrying a path
-    separator (or . / ..) is refused so no pin is read from outside an agents
-    directory."""
+    """Walk UP from cwd through every parent dir checking
+    <dir>/.claude/agents/<type>.md, then ~/.claude/agents/<type>.md; return the
+    first pinned model, else None. A subagent_type carrying a path separator (or
+    . / ..) is refused so no pin is read from outside an agents directory."""
     if not subagent_type or not isinstance(subagent_type, str):
         return None
     if "/" in subagent_type or "\\" in subagent_type or subagent_type in (".", ".."):
@@ -244,9 +228,7 @@ def _read_frontmatter_model(path):
     return m.group(1) if m else None
 
 
-# =========================================================================
-# Workflow policy
-# =========================================================================
+# ---- Workflow policy ----
 def decide_workflow(tool_input, cwd):
     """Decide a Workflow payload. An inline `script` (or a readable `scriptPath`)
     is statically linted. A saved workflow invoked by name / resume id cannot be
@@ -323,9 +305,7 @@ def _workflow_script(tool_input, cwd):
     )
 
 
-# =========================================================================
-# Workflow static lint (token stream)
-# =========================================================================
+# ---- Workflow static lint (token stream) ----
 # Tok is the shared vocabulary of the lint and the lexer: the lexer (lower in
 # the file) produces these tokens and the lint here consumes them, so the type
 # is defined once at the top of the consuming layer -- before its first use --
@@ -337,15 +317,13 @@ class Tok:
     type: one of str, template, regex, num, name, punct.
     text: the raw source slice (delimiters / operator chars included).
     start, end: source offsets (end exclusive) for RAW-source deny snippets.
-    kind: set to 'member' on a name that is a property access (its previous
-          significant token is a '.', which the '?.' optional chain also reduces
-          to since '?.' lexes as '?' then '.'), so a keyword used as a PROPERTY --
-          obj.of, gen.return, p.catch -- is treated as the value it is (a
-          following '/' is division; a following '(' is an ordinary call, not a
-          control-flow head), never as a regex-prefix / control keyword. None
-          everywhere else.
-    interps: only set on a template token: the list of token-lists, one per
-             ${...} interpolation, so calls inside interpolations are lintable.
+    kind: 'member' on a name whose previous significant token is a '.' (a '?.'
+          chain reduces to that '.'), so a keyword used as a PROPERTY (obj.of,
+          gen.return, p.catch) is the value it is -- a following '/' divides, a
+          following '(' is an ordinary call -- never a regex-prefix / control
+          keyword. None else.
+    interps: only on a template token: the token-lists, one per ${...}
+             interpolation, so calls inside interpolations are lintable.
     """
 
     type: str
@@ -358,14 +336,67 @@ class Tok:
 
 @dataclass(slots=True)
 class LintCtx:
-    """Shared context threaded through the token-stream lint: the token list
-    being walked, the raw source (for deny snippets), and the accumulating
-    problem list. Interpolations are walked with a fresh context over their own
-    token list but the same raw source and problem list."""
+    """Shared context threaded through the token-stream lint: the token list, the
+    raw source (for deny snippets), the accumulating problem list, and four O(n)
+    bracket indexes over ``tokens`` (:func:`_index_brackets`). Interpolations walk
+    a fresh context over their own token list (indexed once) but share raw/problems.
+
+    The indexes keep the lint LINEAR: without them every agent()/workflow() token
+    rescans to its ')' and re-splits its argument region, so D nested calls cost
+    O(D^2) and a deeply-nested script can pad a model-less spawn past the hook
+    timeout -- whereupon the hook is killed before emitting a decision, the
+    FAIL-OPEN this plugin forbids."""
 
     tokens: list[Tok]
     raw: str
     problems: list[str] = field(default_factory=list)
+    pre: list[int] = field(default_factory=list, init=False)
+    jump: list[int | None] = field(default_factory=list, init=False)
+    cp: list[int | None] = field(default_factory=list, init=False)
+    cb: list[int | None] = field(default_factory=list, init=False)
+
+    def __post_init__(self):
+        self.pre, self.jump, self.cp, self.cb = _index_brackets(self.tokens)
+
+
+def _index_brackets(tokens):
+    """Precompute four bracket indexes over ``tokens`` in one O(n) pass; a mixed
+    and a per-kind model run together because the lint uses both.
+
+    pre[i]  : MIXED depth before token i (( [ { are +1, ) ] } are -1, so kinds
+              cancel: `a } , b` is one segment); a top-level comma splits iff its
+              pre equals the region base depth.
+    jump[i] : opener -> its mixed single-stack match (else None), to skip a
+              balanced sub-group in one step.
+    cp / cb : the PER-KIND '(' -> ')' / '{' -> '}' match (an interior '{' cannot
+              steal a '(' from its ')'); an opener with no closer stays None so a
+              lookup needing it raises LintError -> deny (fail-closed)."""
+    n = len(tokens)
+    pre = [0] * n
+    jump: list[int | None] = [None] * n
+    cp: list[int | None] = [None] * n
+    cb: list[int | None] = [None] * n
+    per = {"(": (cp, []), "{": (cb, [])}  # opener -> (its result array, its stack)
+    closer_opener = {")": "(", "]": "[", "}": "{"}
+    mix: list[int] = []
+    depth = 0
+    for i, t in enumerate(tokens):
+        pre[i] = depth
+        if t.type != "punct":
+            continue
+        if t.text in ("(", "[", "{"):
+            depth += 1
+            mix.append(i)
+            if t.text in per:
+                per[t.text][1].append(i)
+        elif (opener := closer_opener.get(t.text)) is not None:
+            depth -= 1
+            if mix:
+                jump[mix.pop()] = i
+            if opener in per and per[opener][1]:
+                arr, stack = per[opener]
+                arr[stack.pop()] = i
+    return pre, jump, cp, cb
 
 
 def lint_workflow(script):
@@ -378,11 +409,10 @@ def lint_workflow(script):
 
 
 def _lint_tokens(ctx):
-    """Walk a token stream: lint every agent() call, flag every nested
-    workflow() call, and recurse into template interpolations. The walk does NOT
-    skip a call's arguments, so nested agent()/workflow() calls inside argument
-    positions are found too (matching the reference, which matched agent(
-    anywhere)."""
+    """Walk a token stream: lint every agent() call, flag every nested workflow()
+    call, and recurse into template interpolations. The walk does NOT skip a
+    call's arguments, so nested agent()/workflow() calls in argument positions are
+    found too (matching the reference, which matched agent( anywhere)."""
     tokens = ctx.tokens
     n = len(tokens)
     for i in range(n):
@@ -399,7 +429,9 @@ def _lint_tokens(ctx):
         open_i = _call_open_index(tokens, i)
         if open_i is None:
             continue  # not a call
-        close_i = _match_bracket(tokens, open_i)
+        close_i = ctx.cp[open_i]
+        if close_i is None:  # '(' with no matching ')' -> fail closed (as before)
+            raise LintError("unbalanced parentheses")
         if tok.text == "workflow":
             snip = _snippet(ctx.raw, tok.start, tokens[close_i].end)
             ctx.problems.append(
@@ -432,20 +464,20 @@ def _lint_call(ctx, name_i, open_i, close_i):
     """Lint one agent() call given its name / '(' / ')' token indices."""
     tokens = ctx.tokens
     snip = _snippet(ctx.raw, tokens[name_i].start, tokens[close_i].end)
-    args = _top_level_split(tokens, open_i + 1, close_i)
-    if len(args) < _MIN_AGENT_ARGS or not args[1]:
+    args = _top_level_ranges(ctx, open_i + 1, close_i)
+    if len(args) < _MIN_AGENT_ARGS or args[1][0] == args[1][1]:
         ctx.problems.append(
             f"agent() call has no options object (second argument), so no "
             f"explicit model can be set -> {snip}"
         )
         return
-    present, value_tokens = _object_model(args[1])
+    present, value_range = _object_model(ctx, args[1])
     if not present:
         ctx.problems.append(
             f"agent() options object has no top-level model: key -> {snip}"
         )
         return
-    status, disp = _classify_model_value(value_tokens)
+    status, disp = _classify_model_value(ctx, value_range)
     if status == "banned":
         ctx.problems.append(
             f"agent() options pin a banned model {disp!r}; it must be one of "
@@ -458,31 +490,36 @@ def _lint_call(ctx, name_i, open_i, close_i):
         )
 
 
-def _object_model(opts):
-    """opts is the token-slice of an agent() call's second argument. Return
-    (present, value_tokens): present is True iff opts is a brace object literal
-    with a DEPTH-1 `model` entry (its key in KEY position, since entries are the
-    top-level comma-split of the object). A `model` nested deeper, or one in a
-    value position (`cond ? model : x`), is not a top-level entry key.
-
-    Each entry is the [key, colon-separator, *value] shape a `key: value` binding
-    tokenizes to; the model entry is matched by that shape and its value tokens
-    (everything past the ':') returned directly."""
-    if not _opens_object(opts):
+def _object_model(ctx, opts):
+    """opts is the (lo, hi) token range of an agent() call's second argument.
+    Return (present, value_range): present iff opts is a brace object literal with
+    a DEPTH-1 `model` entry in KEY position (a `model` nested deeper or in a value
+    position like `cond ? model : x` is not one). The matched entry's value range
+    (past its ':') is returned. An opener whose '}' does not close inside opts
+    raises LintError (fail-closed, as the old per-slice match did)."""
+    lo, _hi = opts
+    tokens = ctx.tokens
+    if not _opens_object(ctx, opts):
         return False, None
-    close = _match_bracket(opts, 0)
-    for entry in _top_level_split(opts, 1, close):
-        match entry:
-            case [key, sep, *value] if (
-                _is_model_key(key) and sep.type == "punct" and sep.text == ":"
-            ):
-                return True, value
+    close = ctx.cb[lo]
+    if close is None or close >= _hi:  # '{' not closed within this argument
+        raise LintError("unbalanced braces")
+    for elo, ehi in _top_level_ranges(ctx, lo + 1, close):
+        key = tokens[elo]
+        if (
+            ehi - elo >= _MIN_ENTRY_TOKENS
+            and _is_model_key(key)
+            and tokens[elo + 1].type == "punct"
+            and tokens[elo + 1].text == ":"
+        ):
+            return True, (elo + 2, ehi)
     return False, None
 
 
-def _opens_object(opts):
-    """True iff the token-slice begins with a '{' (an object literal opener)."""
-    return bool(opts) and opts[0].type == "punct" and opts[0].text == "{"
+def _opens_object(ctx, opts):
+    """True iff the token range begins with a '{' (an object literal opener)."""
+    lo, hi = opts
+    return lo < hi and ctx.tokens[lo].type == "punct" and ctx.tokens[lo].text == "{"
 
 
 def _is_model_key(t):
@@ -495,13 +532,13 @@ def _is_model_key(t):
     return False
 
 
-def _classify_model_value(value_tokens):
-    """Classify a top-level model key's value. Returns:
+def _classify_model_value(ctx, value_range):
+    """Classify a top-level model key's value range. Returns:
     ("banned", display) - a literal naming a BANNED_MODELS entry,
     ("blank",  "")      - a literal that is empty / all whitespace,
     ("ok",     None)    - a valid literal, OR a non-literal (dynamic) value the
                           static lint cannot resolve (treated as satisfying)."""
-    lit = _literal_string(value_tokens)
+    lit = _literal_string(ctx, value_range)
     if lit is None:
         return "ok", None
     norm = lit.strip().lower()
@@ -512,14 +549,14 @@ def _classify_model_value(value_tokens):
     return "ok", None
 
 
-def _literal_string(value_tokens):
-    """If value_tokens is exactly one string literal, or a backtick template
-    with no interpolation, return its inner text; else None (identifier, call,
-    concatenation, interpolated template -> not a statically-resolvable
-    literal)."""
-    if len(value_tokens) != 1:
+def _literal_string(ctx, value_range):
+    """If the (lo, hi) value range is exactly one string literal, or a backtick
+    template with no interpolation, return its inner text; else None (identifier,
+    call, concatenation, interpolated template -> not statically resolvable)."""
+    lo, hi = value_range
+    if hi - lo != 1:
         return None
-    t = value_tokens[0]
+    t = ctx.tokens[lo]
     if t.type == "str":
         return _str_inner(t.text)
     if t.type == "template" and not t.interps:
@@ -527,57 +564,55 @@ def _literal_string(value_tokens):
     return None
 
 
-def _top_level_split(tokens, start, stop):
-    """Split tokens[start:stop] on top-level (depth-0) commas, tracking () [] {}
-    nesting. Returns one token-list segment per item; a region with no items
-    still yields a single empty segment (so an empty call reads as one empty
-    argument). This is the whole grammar the lint needs: a call's arguments and
-    an object literal's entries are both depth-0 comma-separated lists."""
-    segments = []
-    segment = []
-    depth = 0
-    for k in range(start, stop):
+def _top_level_ranges(ctx, start, stop):
+    """Split tokens[start:stop] on top-level commas, returning one (lo, hi) index
+    range per item; an item-less region still yields a single empty range (an
+    empty call reads as one empty argument). A comma at index k splits iff
+    ``pre[k] == base`` (the region's entry depth), reproducing the old mixed
+    running-depth == 0 test exactly (negative excursions included). O(items) not
+    O(tokens): at depth >= base an opener's group is deeper and holds no splitter,
+    so ``jump`` skips it in one step."""
+    if start >= stop:
+        return [(start, stop)]
+    tokens = ctx.tokens
+    pre = ctx.pre
+    jump = ctx.jump
+    base = pre[start]
+    ranges = []
+    lo = start
+    k = start
+    while k < stop:
         tok = tokens[k]
         if tok.type == "punct":
-            if tok.text in ("(", "[", "{"):
-                depth += 1
-            elif tok.text in (")", "]", "}"):
-                depth -= 1
-            elif tok.text == "," and depth == 0:
-                segments.append(segment)
-                segment = []
+            if tok.text == "," and pre[k] == base:
+                ranges.append((lo, k))
+                lo = k + 1
+                k += 1
                 continue
-        segment.append(tok)
-    segments.append(segment)
-    return segments
+            if tok.text in ("(", "[", "{") and pre[k] >= base:
+                m = jump[k]
+                if m is not None and m < stop:
+                    k = m + 1  # skip the balanced sub-group in one step
+                    continue
+        k += 1
+    ranges.append((lo, stop))
+    return ranges
 
 
-def _match_bracket(tokens, open_i):
-    """tokens[open_i] is an opening '(' or '{'. Return the index of the matching
-    closer, counting only that bracket kind (interior strings are opaque single
-    tokens, so the other bracket kinds cannot stray). Raises on imbalance."""
-    opener = tokens[open_i].text
-    closer, name = _BRACKETS[opener]
-    depth = 0
-    for k in range(open_i, len(tokens)):
-        t = tokens[k]
-        if t.type == "punct":
-            if t.text == opener:
-                depth += 1
-            elif t.text == closer:
-                depth -= 1
-                if depth == 0:
-                    return k
-    raise LintError(f"unbalanced {name}")
-
-
-_BRACKETS = {"(": (")", "parentheses"), "{": ("}", "braces")}
+# Source chars scanned per deny snippet (a whitespace-collapsed slice truncated
+# to 120). Bounding it (>> 120, so ordinary calls quote identically) keeps each
+# snippet O(1) not O(call-span) -- else an outer call spanning the whole script
+# rescans every byte, restoring the quadratic this lint's indexing removes.
+_SNIPPET_SCAN = 512
 
 
 def _snippet(raw, start, end):
     """A whitespace-collapsed, length-capped slice of the raw source for a deny
-    reason, so the offending call is quoted back readably."""
-    return re.sub(r"\s+", " ", raw[start:end]).strip()[:120]
+    reason, so the offending call is quoted back readably. Callers pass a token's
+    (non-whitespace) start offset, so scanning a bounded prefix yields the same
+    first-120 chars as the full span for any realistically-spaced call."""
+    stop = min(end, start + _SNIPPET_SCAN)
+    return re.sub(r"\s+", " ", raw[start:stop]).strip()[:120]
 
 
 def _str_inner(text):
@@ -586,9 +621,7 @@ def _str_inner(text):
     return text[1:-1]
 
 
-# =========================================================================
-# ECMAScript lexer
-# =========================================================================
+# ---- ECMAScript lexer ----
 # Reserved beforeExpr words: a word that CANNOT end an expression, so a '/'
 # after it opens a regex, not division. Any other word (a plain identifier or a
 # value keyword such as this / true / null) ends an expression -> its '/' is
@@ -596,23 +629,10 @@ def _str_inner(text):
 # each can also be an identifier (`let of = 1`) or a property, so it ends an
 # expression and its '/' is division -- else a model-less `of / agent('t', {})
 # / 2` would be swallowed whole as a regex and allowed.
-_REGEX_KEYWORDS = frozenset(
-    {
-        "return",
-        "typeof",
-        "instanceof",
-        "in",
-        "new",
-        "delete",
-        "void",
-        "throw",
-        "case",
-        "do",
-        "else",
-        "default",
-        "extends",
-    }
+_REGEX_KEYWORD_WORDS = (
+    "return typeof instanceof in new delete void throw case do else default extends"
 )
+_REGEX_KEYWORDS = frozenset(_REGEX_KEYWORD_WORDS.split())
 
 # Token types whose presence ENDS an expression, so a following '/' is division.
 _VALUE_TYPES = frozenset({"num", "str", "regex", "template"})
@@ -645,11 +665,10 @@ def _scan_string(s, i):
 
 
 def _scan_regex(s, i):
-    """s[i] is '/', already known to start a regex literal. Return index past
-    the closing '/'. Handles escapes and [ ] character classes (a '/' inside a
-    class is literal). Trailing flags are left for the next token (an identifier
-    read); this matches the reference and never hides a call. Raises on
-    non-termination (a regex cannot cross a newline)."""
+    """s[i] is '/', already known to start a regex literal. Return index past the
+    closing '/'. Handles escapes and [ ] character classes (a '/' inside a class
+    is literal); trailing flags are left for the next (identifier) token. Raises
+    on non-termination (a regex cannot cross a newline)."""
     n = len(s)
     i += 1
     in_class = False
@@ -673,8 +692,7 @@ def _scan_regex(s, i):
 def _scan_number(s, i):
     """s[i] starts a numeric literal. Return index just past it. Deliberately
     permissive (hex/bin/oct/float/exponent/bigint/separators) -- its only job is
-    to end the number so a following '/' is division and the next identifier is
-    not swallowed."""
+    to end the number so a following '/' divides and the next identifier shows."""
     n = len(s)
     j = i
     if s[j] == ".":
@@ -707,14 +725,10 @@ def _scan_number(s, i):
 def _division_ambiguity(s, i):
     """s[i] is a '/' the lexer classified as DIVISION. Return True iff it ALSO
     admits a single-line regex reading (an unescaped closing '/' before the next
-    newline) whose span carries an UNBALANCED quote / backtick.
-
-    Such a slash is the fatal ambiguity: the regex reading skips the quote, but
-    the division reading treats it as a string delimiter that pairs across the
-    intervening code -- exactly how an adversarial `foo /a'/ agent(...)` hides a
-    model-less spawn. A balanced span is safe to read as division (its strings
-    stay local and cannot swallow a later call), so ordinary one-line arithmetic
-    like `a / b + "x" / c` is NOT flagged."""
+    newline) whose span carries an UNBALANCED quote / backtick -- the fatal
+    ambiguity where the regex reading skips the quote but the division reading
+    pairs it across the code, hiding a model-less spawn (`foo /a'/ agent(...)`). A
+    balanced span stays local, so ordinary `a / b + "x" / c` is NOT flagged."""
     n = len(s)
     j = i + 1
     in_class = False
@@ -739,24 +753,15 @@ def _division_ambiguity(s, i):
 
 
 def _slash_context(prev):
-    """Classify a '/' by the previous significant token. Returns 'regex' or
-    'div'.
+    """Classify a '/' by the previous significant token as 'regex' or 'div'.
 
-    A '/' is DIVISION after anything that can END an expression, because only
-    then does what follows keep executing as code (so a real call after the
-    slash must stay visible to the lint): a value literal, an identifier, a
-    keyword used as a property (obj.of), or a closing ) ] } (a call / group /
-    member / block or object close). It begins a REGEX only in positions that
-    demand a fresh expression: start of input, after an operator or opener, or
-    after a reserved beforeExpr keyword.
-
-    The ) and } cases are the genuinely context-dependent ones. We resolve them
-    as DIVISION -- the fatal-safe reading the certified reference used: a
-    division-classified slash never hides a following call (it is lexed as
-    ordinary code), and the _division_ambiguity net still fails closed on the
-    adversarial quote-bearing form. A legitimate statement-position regex after
-    a '}' or ')' is rare and, unless it carries an unbalanced quote, still lexes
-    to harmless tokens."""
+    A '/' is DIVISION after anything that can END an expression (a value literal,
+    an identifier, a keyword-as-property like obj.of, or a closing ) ] }), so a
+    real call after the slash stays a visible token; it opens a REGEX only where a
+    fresh expression is demanded (start of input, after an operator / opener, or a
+    reserved beforeExpr keyword). The ) and } cases are resolved as DIVISION --
+    the fatal-safe reading -- since it never hides a following call and
+    _division_ambiguity still fails closed on the quote-bearing form."""
     if prev is None:
         return "regex"  # start of input
     if prev.type == "name":
@@ -803,11 +808,10 @@ _INTERP_CLOSE = object()
 @dataclass
 class _Cursor:
     """Shared, mutable scan state threaded through the tokenizer's handlers:
-    source ``s`` and cursor ``i`` (length ``n``), emitted ``tokens``, the
-    previous significant token ``prev`` (drives the regex-vs-division decision),
-    and ``brace_depth`` -- the '{' nesting that locates the '}' closing an
-    enclosing ${...} (present only while ``interp``). Handlers mutate it in
-    place, so no one function carries the whole branchy state machine."""
+    source ``s`` / cursor ``i`` (length ``n``), emitted ``tokens``, the previous
+    significant token ``prev`` (drives the regex-vs-division decision), and
+    ``brace_depth`` -- the '{' nesting locating the '}' that closes an enclosing
+    ${...} (only while ``interp``). Handlers mutate it in place."""
 
     s: str
     i: int
@@ -882,10 +886,10 @@ def _read_open_brace(st):
 
 def _read_close_brace(st):
     """Handle '}'. A '}' at brace_depth 0 inside an interpolation closes the
-    enclosing ${...}: return :data:`_INTERP_CLOSE` and leave the '}' unconsumed
-    for _scan_template to resume on. Otherwise emit a brace token, unwinding one
-    level of interpolation nesting when inside it; a stray top-level '}' is
-    tolerated -- it cannot hide a call, matching the reference."""
+    enclosing ${...}: return :data:`_INTERP_CLOSE`, leaving the '}' unconsumed for
+    _scan_template. Otherwise emit a brace token, unwinding one interpolation
+    nesting level when inside it; a stray top-level '}' is tolerated (it cannot
+    hide a call)."""
     if st.brace_depth == 0 and st.interp:
         return _INTERP_CLOSE  # closes the enclosing ${...}; '}' left unconsumed
     if st.brace_depth > 0:
@@ -902,11 +906,11 @@ def _read_paren(st):
 
 
 def _read_backslash(_st):
-    """A bare backslash cannot legally appear outside a string / template /
-    regex (all consumed above); it can only be a \\uXXXX identifier escape JS
-    folds into an identifier char (so "\\u0061gent(...)" invokes `agent`),
-    smuggling a call whose escaped name never lexes to "agent"/"workflow". Fail
-    closed. (``_st``: the cursor is unused -- this handler only ever fails.)"""
+    """A bare backslash cannot legally appear outside a string / template / regex
+    (all consumed above); it can only be a \\uXXXX identifier escape JS folds into
+    an identifier char (so "\\u0061gent(...)" invokes `agent`), smuggling a call
+    whose escaped name never lexes to "agent"/"workflow". Fail closed. (``_st``
+    unused -- this handler only ever fails.)"""
     raise LintError(
         "stray backslash outside a string / regex / template; a "
         "unicode-escaped identifier cannot be statically verified"
@@ -970,20 +974,16 @@ _DISPATCH: dict[str, Callable[[_Cursor], object]] = {
 
 
 def _lex(s, start, interp=False):
-    """Tokenize s from `start`. Returns (tokens, next_index).
+    """Tokenize s from `start`. Returns (tokens, next_index). When interp is True
+    we are inside a ${...}; lexing stops at the '}' with no matching '{' in this
+    invocation (its index returned, the '}' NOT consumed, so _scan_template
+    resumes the surrounding template there).
 
-    When interp is True we are inside a ${...}; lexing stops at the '}' that has
-    no matching '{' in this invocation (its index is returned, the '}' NOT
-    consumed, so _scan_template can resume the surrounding template there).
-
-    Raises LintError on any unterminated literal / comment, or on a genuinely
-    ambiguous division-context slash. Stray closing brackets at the top level are
-    tolerated (they cannot hide a call), matching the reference's leniency.
-
-    A slim dispatch loop drives the state machine: it looks up the leading char
-    in :data:`_DISPATCH` (else :func:`_read_rest`), so each single-purpose
-    `_read_*` handler mutates the shared :class:`_Cursor`; the regex-vs-division
-    decision lives in :func:`_read_slash`."""
+    Raises LintError on any unterminated literal / comment or a genuinely
+    ambiguous division-context slash; stray top-level closing brackets are
+    tolerated (they cannot hide a call). A dispatch loop drives it: the leading
+    char is looked up in :data:`_DISPATCH` (else :func:`_read_rest`) and each
+    `_read_*` handler mutates the shared :class:`_Cursor`."""
     st = _Cursor(s, start, len(s), interp)
     while st.i < st.n:
         if s[st.i] in " \t\r\n":  # insignificant whitespace: advance, emit nothing
