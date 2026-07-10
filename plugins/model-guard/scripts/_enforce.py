@@ -47,6 +47,8 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from _jsstr import js_decode_string
+
 BANNED_MODELS = {"fable", "inherit"}
 VALID_CHOICES = ["haiku", "sonnet", "opus"]
 VALID_CHOICES_STR = ", ".join(VALID_CHOICES)
@@ -533,9 +535,9 @@ def _simple_key(tokens, elo, ehi):
 
 def _classify_model_value(ctx, value_range):
     """Classify a top-level model key's value range. Returns:
-    ("banned", display) - a literal naming a BANNED_MODELS entry,
-    ("blank",  "")      - a literal that is empty / all whitespace,
-    ("ok",     None)    - a valid literal, OR a non-literal (dynamic) value the
+    ("banned", display) - a literal that JS-DECODES to a BANNED_MODELS entry,
+    ("blank",  "")      - a literal that decodes to empty / all whitespace,
+    ("ok",     None)    - any other literal, OR a non-literal (dynamic) value the
                           static lint cannot resolve (treated as satisfying)."""
     lit = _literal_string(ctx, value_range)
     if lit is None:
@@ -549,23 +551,22 @@ def _classify_model_value(ctx, value_range):
 
 
 def _literal_string(ctx, value_range):
-    """Inner text of a model value that is exactly ONE plain (escape-free) string
-    / non-interpolated-template literal; None when it carries no string / template
-    token at all (a bare identifier / call, treated as satisfying). FAIL CLOSED
-    (LintError -> deny) on any OTHER string-bearing value -- an escape,
-    concatenation, ternary, or interpolation can statically mask a banned model,
-    and a real model name needs none of them."""
+    """Resolve a model value that is exactly ONE string / non-interpolated template
+    literal to the runtime string JS would produce -- its escapes JS-decoded by
+    :func:`js_decode_string`, so an escaped banned name folds and is caught. None
+    when the value carries no string / template token (a bare identifier / call,
+    treated as satisfying). FAIL CLOSED (LintError -> deny) on any OTHER string-
+    bearing value -- a concatenation, ternary, `||` default, or interpolation can
+    fold to a banned model no cheap check proves safe; a real name is one literal."""
     lo, hi = value_range
-    if (
-        hi - lo == 1
-        and "\\" not in (t := ctx.tokens[lo]).text
-        and (t.type == "str" or (t.type == "template" and not t.interps))
-    ):
-        return t.text[1:-1]  # strip quotes / backticks
+    if hi - lo == 1:
+        t = ctx.tokens[lo]
+        if t.type == "str" or (t.type == "template" and not t.interps):
+            return js_decode_string(t.text[1:-1])  # strip delimiters, decode escapes
     if any(ctx.tokens[k].type in ("str", "template") for k in range(lo, hi)):
         raise LintError(
-            "model value is not one plain string literal (an escape, "
-            "concatenation, ternary, or interpolation can mask a banned model)"
+            "model value is not one plain string literal (a concatenation, "
+            "ternary, or interpolation can fold to a banned model)"
         )
     return None
 

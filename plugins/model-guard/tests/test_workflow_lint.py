@@ -5,7 +5,9 @@ Target: ``plugins/model-guard/scripts/enforce_explicit_model.py``. The hook's
 *behaviour* is the contract; this module pins the Workflow-side contract:
 
     WorkflowShapeTests          Workflow payload shapes + strict env flag.
-    LintSemanticsTests          top-level model: key detection + value class.
+    LintKeyDetectionTests       top-level model: key detection + call structure.
+    LintValueClassTests         model value classification (JS-decoded literal
+                                vs banned / blank / dynamic / fold-to-banned).
     DuplicateModelKeyTests      a duplicate top-level model key fails closed
                                 (JS keeps the LAST duplicate).
     OptionalCallTests           agent?.(...) / workflow?.(...) are real spawns.
@@ -115,16 +117,15 @@ class WorkflowShapeTests(HookTestCase):
 
 
 # =========================================================================
-# lint semantics: model: key detection + value classification
+# lint semantics: model: key detection + call structure
 # =========================================================================
-class LintSemanticsTests(HookTestCase):
+class LintKeyDetectionTests(HookTestCase):
     """Given a correctly-lexed stream, the lint accepts a spawn iff its second
-    argument is an object literal with a DEPTH-1 `model` key in KEY position
-    whose value is not a banned/blank literal. This class pins key detection
-    (top-level only, quoted keys, ternary value-position rejection), value
-    classification (literal valid / blank / banned / dynamic), the no-options
-    denials, nested-workflow denial, pipeline pass-through, interpolation
-    recursion, and multi-call reporting."""
+    argument is an object literal with a DEPTH-1 `model` key in KEY position. This
+    class pins key detection (top-level only, quoted keys, ternary value-position
+    rejection), the no-options denials, nested-workflow denial, pipeline pass-
+    through, interpolation recursion, and multi-call reporting; value
+    classification lives in :class:`LintValueClassTests`."""
 
     # ---- key must be top-level and in key position -----------------------
     def test_bareword_and_quoted_keys_accepted(self):
@@ -165,95 +166,6 @@ class LintSemanticsTests(HookTestCase):
     def test_key_after_call_value_comma_counts(self):
         """A model key after a comma that follows a call value still counts."""
         self.wf_abstain("agent('do', { a: fn(1, 2), model: 'sonnet' });")
-
-    # ---- value classification --------------------------------------------
-    def test_valid_literal_values_abstain(self):
-        """Each valid literal model value abstains."""
-        for mv in ("haiku", "sonnet", "opus"):
-            with self.subTest(model=mv):
-                self.wf_abstain(f"agent('x', {{ model: '{mv}' }});")
-
-    def test_dynamic_value_abstains(self):
-        """A non-literal (identifier) model value is treated as satisfying."""
-        # A non-literal (identifier) model value cannot be statically resolved;
-        # it is treated as satisfying presence, not denied (documented).
-        self.wf_abstain("agent('x', { model: chosenModel });")
-
-    def test_escaped_model_value_denies(self):
-        r"""A JS string / template escape in the model value folds to a banned
-        model at runtime (e.g. 'fabl\x65' === 'fable'); the raw source never
-        equals it, so the value must fail closed rather than classify 'ok'."""
-        for opts in (
-            r"{ model: 'fabl\x65' }",
-            r"{ model: '\x66able' }",
-            r"{ model: '\x66\x61\x62\x6c\x65' }",
-            r"{ model: 'fabl\u{65}' }",
-            r"{ model: 'i\x6eherit' }",
-            r"{ model: `fabl\x65` }",
-        ):
-            with self.subTest(opts=opts):
-                self.wf_deny(
-                    f"agent('t', {opts});", reason_substring="plain string literal"
-                )
-
-    def test_concatenated_model_value_denies(self):
-        """A '+'-concatenation of string literals folds to a banned model
-        ('fa' + 'ble' === 'fable') yet is no single literal -> fail closed."""
-        for opts in ("{ model: 'fa' + 'ble' }", "{ model: 'in' + 'herit' }"):
-            with self.subTest(opts=opts):
-                self.wf_deny(
-                    f"agent('t', {opts});", reason_substring="plain string literal"
-                )
-
-    def test_static_interpolation_model_value_denies(self):
-        """A template that interpolates string literals folds to a banned model
-        (`fa${''}ble` === 'fable') yet is not a plain literal -> fail closed."""
-        self.wf_deny(
-            "agent('t', { model: `fa${''}ble` });",
-            reason_substring="plain string literal",
-        )
-
-    def test_string_bearing_dynamic_value_denies(self):
-        """The tightened boundary: any string-token-bearing model expression that
-        is not one plain literal (here a ternary / a `||` default) fails closed,
-        since a literal branch could be the banned model."""
-        for opts in (
-            "{ model: cond ? 'opus' : 'fable' }",
-            "{ model: chosen || 'fable' }",
-        ):
-            with self.subTest(opts=opts):
-                self.wf_deny(
-                    f"agent('t', {opts});", reason_substring="plain string literal"
-                )
-
-    def test_blank_literal_values_deny(self):
-        """An empty or whitespace-only literal model value denies as blank."""
-        # Only truly empty / whitespace PLAIN literals classify as blank; an
-        # escaped literal (e.g. '\t') never reaches here -- it fails closed on
-        # its backslash first (see test_escaped_model_value_denies).
-        for opts in (
-            "{ model: '' }",
-            '{ model: "" }',
-            "{ model: '  ' }",
-            "{ model: `` }",
-            "{ model: `   ` }",
-        ):
-            with self.subTest(opts=opts):
-                self.wf_deny(f"agent('x', {opts});", reason_substring="blank")
-
-    def test_banned_literal_values_deny(self):
-        """A banned literal model value denies across quote forms and case."""
-        # Banned across quote forms and case -- matches the Agent-side ban.
-        for opts in (
-            "{ model: 'fable' }",
-            "{ model: 'inherit' }",
-            "{ model: 'FABLE' }",
-            '{ model: "fable" }',
-            "{ model: `fable` }",
-            "{ \"model\": 'inherit' }",
-        ):
-            with self.subTest(opts=opts):
-                self.wf_deny(f"agent('x', {opts});", reason_substring="banned")
 
     # ---- no options object -----------------------------------------------
     def test_missing_model_key_denies(self):
@@ -319,6 +231,158 @@ class LintSemanticsTests(HookTestCase):
             "agent('the-bad-one', { model: 'fable' });\n",
             reason_substring="the-bad-one",
         )
+
+
+# =========================================================================
+# model value classification: JS-decoded literal vs banned / blank / dynamic
+# =========================================================================
+class LintValueClassTests(HookTestCase):
+    r"""A top-level model key's VALUE is resolved exactly as JavaScript would.
+
+    A single string / non-interpolated template literal is JS-DECODED (\xHH,
+    \uHHHH, \u{...}, legacy octal \NNN, \n\t...) and the decoded text classified:
+    a banned name denies as banned, an empty / whitespace value denies as blank,
+    anything else (including an unknown but non-banned name) is allowed. A value
+    that is a concatenation, an interpolated template, or any multi-token
+    expression CONTAINING a string / template literal can static-fold to a banned
+    name and cannot be cheaply proven safe -> fail closed (deny). A purely dynamic
+    value (a bare identifier / call, no string token) stays allowed per contract.
+
+    Teeth: the escape / octal / unicode / template deny cases below name the
+    DECODED banned model (`reason='banned'`); HEAD's blunt escape-fail-closed
+    denies them only as an unparseable 'plain string literal', so each pins the
+    decode. The decoded-non-banned controls ALLOW where HEAD fails closed."""
+
+    # ---- valid / dynamic / unknown values are allowed --------------------
+    def test_valid_literal_values_abstain(self):
+        """Each valid literal model value abstains."""
+        for mv in ("haiku", "sonnet", "opus"):
+            with self.subTest(model=mv):
+                self.wf_abstain(f"agent('x', {{ model: '{mv}' }});")
+
+    def test_plain_unknown_model_value_abstains(self):
+        """An unknown but plain non-banned string literal is allowed (the policy is
+        a ban-list, not a whitelist, for plain literal names)."""
+        for opts in ("{ model: 'gpt-4' }", '{ model: "claude-x" }', "{ model: `o3` }"):
+            with self.subTest(opts=opts):
+                self.wf_abstain(f"agent('x', {opts});")
+
+    def test_dynamic_value_abstains(self):
+        """A non-literal (identifier / member / call) model value is treated as
+        satisfying: it carries no string token, so the lint cannot resolve it and
+        the author's explicit choice is respected (documented contract)."""
+        for opts in (
+            "{ model: chosenModel }",
+            "{ model: cfg.model }",
+            "{ model: pick() }",
+        ):
+            with self.subTest(opts=opts):
+                self.wf_abstain(f"agent('x', {opts});")
+
+    # ---- escaped / octal / unicode literals decode to a banned name ------
+    def test_escaped_model_value_decodes_to_banned(self):
+        r"""A hex / unicode-brace escape folds to a banned model at runtime
+        (`'fabl\x65'` === `'fable'`); the value is JS-DECODED and denies as banned,
+        NOT waved through and NOT merely called unparseable."""
+        for opts in (
+            r"{ model: 'fabl\x65' }",
+            r"{ model: '\x66able' }",
+            r"{ model: '\x66\x61\x62\x6c\x65' }",
+            r"{ model: 'fabl\u{65}' }",
+            r"{ model: 'i\x6eherit' }",
+            r"{ model: `fabl\x65` }",
+        ):
+            with self.subTest(opts=opts):
+                self.wf_deny(
+                    f"agent('t', {opts});", reason_substring="pin a banned model"
+                )
+
+    def test_octal_and_uhhhh_escape_decodes_to_banned(self):
+        r"""Legacy octal (`\146\141...`) and 4-digit `\uHHHH` escapes decode the
+        same way -- both fold to a banned model and deny as banned."""
+        for opts in (
+            r"{ model: '\146\141\142\154\145' }",  # octal -> fable
+            r"{ model: '\u0066able' }",  # \uHHHH -> fable
+            r"{ model: '\u0069nherit' }",  # \uHHHH -> inherit
+            r"{ model: `\146\141\142\154\145` }",  # octal in a template -> fable
+        ):
+            with self.subTest(opts=opts):
+                self.wf_deny(
+                    f"agent('t', {opts});", reason_substring="pin a banned model"
+                )
+
+    def test_decoded_non_banned_escape_abstains(self):
+        r"""An escaped literal that decodes to a NON-banned name is allowed, exactly
+        as JS resolves it (`'op\x75s'` -> `'opus'`, `'gpt\x2d4'` -> `'gpt-4'`).
+        Teeth: HEAD fails closed on any backslash and would DENY these."""
+        for opts in (
+            r"{ model: 'op\x75s' }",
+            r"{ model: 'gpt\x2d4' }",
+            r"{ model: `son\x67o` }",
+        ):
+            with self.subTest(opts=opts):
+                self.wf_abstain(f"agent('x', {opts});")
+
+    # ---- multi-token string-bearing values fail closed -------------------
+    def test_concatenated_model_value_denies(self):
+        """A '+'-concatenation of string literals folds to a banned model
+        ('fa' + 'ble' === 'fable') yet is no single literal -> fail closed."""
+        for opts in ("{ model: 'fa' + 'ble' }", "{ model: 'in' + 'herit' }"):
+            with self.subTest(opts=opts):
+                self.wf_deny(
+                    f"agent('t', {opts});", reason_substring="plain string literal"
+                )
+
+    def test_static_interpolation_model_value_denies(self):
+        """A template that interpolates string literals folds to a banned model
+        (`fa${''}ble` === 'fable') yet is not a plain literal -> fail closed."""
+        self.wf_deny(
+            "agent('t', { model: `fa${''}ble` });",
+            reason_substring="plain string literal",
+        )
+
+    def test_string_bearing_dynamic_value_denies(self):
+        """Any string-token-bearing model expression that is not one plain literal
+        (here a ternary / a `||` default) fails closed, since a literal branch could
+        be the banned model."""
+        for opts in (
+            "{ model: cond ? 'opus' : 'fable' }",
+            "{ model: chosen || 'fable' }",
+        ):
+            with self.subTest(opts=opts):
+                self.wf_deny(
+                    f"agent('t', {opts});", reason_substring="plain string literal"
+                )
+
+    # ---- blank and plain banned literals ---------------------------------
+    def test_blank_literal_values_deny(self):
+        r"""An empty or whitespace-only model value denies as blank -- including a
+        value that DECODES to whitespace (`'\t'` -> a tab), which JS would resolve
+        to a blank model just the same."""
+        for opts in (
+            "{ model: '' }",
+            '{ model: "" }',
+            "{ model: '  ' }",
+            "{ model: `` }",
+            "{ model: `   ` }",
+            r"{ model: '\t' }",  # decodes to a tab -> whitespace-only -> blank
+        ):
+            with self.subTest(opts=opts):
+                self.wf_deny(f"agent('x', {opts});", reason_substring="blank")
+
+    def test_banned_literal_values_deny(self):
+        """A plain banned literal model value denies across quote forms and case."""
+        # Banned across quote forms and case -- matches the Agent-side ban.
+        for opts in (
+            "{ model: 'fable' }",
+            "{ model: 'inherit' }",
+            "{ model: 'FABLE' }",
+            '{ model: "fable" }',
+            "{ model: `fable` }",
+            "{ \"model\": 'inherit' }",
+        ):
+            with self.subTest(opts=opts):
+                self.wf_deny(f"agent('x', {opts});", reason_substring="banned")
 
 
 # =========================================================================
