@@ -9,7 +9,7 @@
     {
       "name": "gh-pm",
       "description": "GitHub project management workflows, enforcement hooks, and PR reviewer agent",
-      "version": "3.0.0",
+      "version": "4.0.0",
       "source": {
         "source": "github",
         "repo": "trackness/gh-pm"
