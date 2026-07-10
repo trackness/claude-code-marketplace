@@ -30,7 +30,7 @@
   - ALL work that can be run via subagents (or in ultracode workflows where appropriate) MUST be. Route every turn's work BEFORE doing any of it in the main loop.
   - The sole exception is work that CANNOT be delegated without contortion. Contortion is a property of the work, NEVER of your appetite for writing the prompt. "The subagent would need context transferred" describes a prompt to write, NOT a contortion.
   - The main loop MUST stay orchestration-thin to limit context fill.
-  - EVERY spawned agent MUST run on a model chosen for its task, NEVER one default model for everything. Fable is NEVER that model.
+  - EVERY spawned agent MUST run on a model chosen for its task, NEVER one default model for everything. Fable is NEVER that model. Everything up to Opus is valid.
   - ALWAYS run an adversarial verification pass on inline work BEFORE presenting it as done, clean, or ready. Hunt the defects the work could actually contain, chosen from its real failure modes and NEVER from what is easiest to check. No edit is too small, and a pass that reports clean without hunting verifies NOTHING.
 
 - **Thoroughness**
