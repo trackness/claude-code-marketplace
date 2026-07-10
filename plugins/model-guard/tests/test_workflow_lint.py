@@ -345,5 +345,77 @@ class OptionalCallTests(HookTestCase):
         self.wf_abstain("const z = agent ? a : b;")
 
 
+# =========================================================================
+# simple-options whitelist: fail closed on constructs that can hide the model
+# =========================================================================
+class SimpleOptionsShapeTests(HookTestCase):
+    """The options object is accepted ONLY when every top-level entry is a
+    statically-simple `simple-key : value` (bareword or escape-free quoted key).
+    Any construct whose effective model the lint cannot prove -- a computed key,
+    an escaped-name key, a spread, a getter/setter/method/shorthand entry, or a
+    prototype-mutating __proto__ key -- fails closed to a deny, even when a benign
+    `model:'opus'` sits beside it (each construct below runs / masks a banned
+    'fable' at runtime yet slipped past the pre-fix key-spelling enumeration).
+
+    Teeth: every deny case here ALLOWS under HEAD:_enforce.py (proven at build);
+    a legitimate simple object and a dynamic model value still abstain."""
+
+    def test_computed_key_denies(self):
+        """A computed `['model']` key can override the model -> deny."""
+        self.wf_deny(
+            "agent('x', { model: 'opus', ['model']: 'fable' });",
+            reason_substring="non-simple",
+        )
+
+    def test_escaped_name_key_denies(self):
+        r"""An escaped quoted key `'mod\x65l'` is 'model' at runtime -> deny."""
+        self.wf_deny(
+            r"agent('x', { model: 'sonnet', 'mod\x65l': 'fable' });",
+            reason_substring="escaped",
+        )
+
+    def test_spread_entry_denies(self):
+        """A spread `...{ model: 'fable' }` overrides the model -> deny."""
+        self.wf_deny(
+            "agent('x', { model: 'opus', ...{ model: 'fable' } });",
+            reason_substring="non-simple",
+        )
+
+    def test_proto_key_denies(self):
+        """A `__proto__` key mutates the prototype and cannot be verified -> deny."""
+        self.wf_deny(
+            "agent('x', { model: 'opus', __proto__: { model: 'fable' } });",
+            reason_substring="__proto__",
+        )
+
+    def test_getter_entry_denies(self):
+        """A `get model(){...}` getter redefines model at runtime -> deny."""
+        self.wf_deny(
+            "agent('x', { model: 'opus', get model() { return 'fable'; } });",
+            reason_substring="non-simple",
+        )
+
+    def test_method_entry_denies(self):
+        """A method entry `run(){...}` is not a `simple-key : value` -> deny."""
+        self.wf_deny(
+            "agent('x', { model: 'opus', run() { return 1; } });",
+            reason_substring="non-simple",
+        )
+
+    def test_shorthand_entry_denies(self):
+        """A shorthand entry `extra` is not a `simple-key : value` -> deny."""
+        self.wf_deny(
+            "agent('x', { model: 'opus', extra });", reason_substring="non-simple"
+        )
+
+    def test_simple_valid_object_still_abstains(self):
+        """A wholly-simple object with a valid model still passes."""
+        self.wf_abstain("agent('x', { model: 'opus', label: 'y' });")
+
+    def test_dynamic_model_value_still_abstains(self):
+        """A simple entry with a dynamic (identifier) model value still passes."""
+        self.wf_abstain("agent('x', { model: chosenModel });")
+
+
 if __name__ == "__main__":
     unittest.main()

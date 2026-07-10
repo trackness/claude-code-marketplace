@@ -56,9 +56,6 @@ ALLOW_FRONTMATTER_PIN = True
 # arguments than this cannot carry a model: key.
 _MIN_AGENT_ARGS = 2
 
-# An object entry needs at least a key token and its ':' to be a `key:` binding.
-_MIN_ENTRY_TOKENS = 2
-
 
 def _env_flag(name, default=False):
     v = os.environ.get(name)
@@ -493,13 +490,10 @@ def _lint_call(ctx, name_i, open_i, close_i):
 
 
 def _object_model(ctx, opts):
-    """opts is the (lo, hi) token range of an agent() call's second argument. Return
-    (present, value_range): present iff opts is a brace object literal with a DEPTH-1
-    `model` entry in KEY position (a `model` nested deeper or in a value position like
-    `cond ? model : x` is not one); value_range is its value (past ':'). A SECOND
-    top-level `model` key raises LintError -> deny (fail-closed): JS keeps the LAST
-    duplicate, so a first-wins read of `{model:'opus', model:'fable'}` clears 'opus'
-    while 'fable' runs. An opener whose '}' does not close inside opts raises too."""
+    """opts is the (lo, hi) token range of an agent() call's second argument.
+    Return (present, value_range) for its top-level `model` entry after proving
+    the object statically simple. FAIL CLOSED (LintError -> deny) on a non-brace
+    opener, any entry :func:`_simple_key` rejects, or a duplicate `model` key."""
     tokens = ctx.tokens
     lo, hi = opts
     if not (lo < hi and tokens[lo].type == "punct" and tokens[lo].text == "{"):
@@ -509,27 +503,32 @@ def _object_model(ctx, opts):
         raise LintError("unbalanced braces")
     value_range = None
     for elo, ehi in _top_level_ranges(ctx, lo + 1, close):
-        key = tokens[elo]
-        if (
-            ehi - elo >= _MIN_ENTRY_TOKENS
-            and _is_model_key(key)
-            and tokens[elo + 1].type == "punct"
-            and tokens[elo + 1].text == ":"
-        ):
-            if value_range is not None:  # duplicate top-level model key
-                raise LintError("duplicate top-level model key")
-            value_range = (elo + 2, ehi)
+        if elo == ehi or _simple_key(tokens, elo, ehi) != "model":
+            continue  # empty entry (trailing comma) or a non-model simple key
+        if value_range is not None:  # JS keeps the LAST duplicate; deny both
+            raise LintError("duplicate top-level model key")
+        value_range = (elo + 2, ehi)
     return value_range is not None, value_range
 
 
-def _is_model_key(t):
-    """A key token naming `model`: the bareword `model`, or a quoted 'model' /
-    "model"."""
-    if t.type == "name":
-        return t.text == "model"
-    if t.type == "str":
-        return _str_inner(t.text) == "model"
-    return False
+def _simple_key(tokens, elo, ehi):
+    """Return the NAME of a WHITELISTED-simple `simple-key : value` object entry
+    (bareword or escape-free quoted key, then ':'); FAIL CLOSED (LintError ->
+    deny) on a spread, computed `[expr]` key, getter/setter/method/shorthand,
+    escaped quoted key, or `__proto__` key -- any construct that could hide it."""
+    sep = tokens[elo + 1] if ehi > elo + 1 else None  # need a key then its ':'
+    if sep is None or sep.type != "punct" or sep.text != ":":
+        raise LintError("non-simple options entry (spread/computed/getter/shorthand)")
+    key = tokens[elo]
+    if key.type == "name":
+        name = key.text
+    elif key.type == "str" and "\\" not in key.text:
+        name = _str_inner(key.text)
+    else:
+        raise LintError("computed or escaped options key cannot be verified")
+    if name == "__proto__":
+        raise LintError("__proto__ options key mutates the prototype")
+    return name
 
 
 def _classify_model_value(ctx, value_range):
