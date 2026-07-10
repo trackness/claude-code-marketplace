@@ -16,7 +16,7 @@ This module is the single point of contact with that contract:
   so every test states the decision it expects and the reason substring that
   proves the hook denied for the *right* reason.
 
-stdlib only; python3 >= 3.9.
+stdlib only; python3 >= 3.14.
 """
 
 import json
@@ -24,18 +24,29 @@ import os
 import subprocess
 import sys
 import unittest
-from collections import namedtuple
+from typing import NamedTuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.abspath(
     os.path.join(HERE, "..", "scripts", "enforce_explicit_model.py")
 )
 
-# decision:  'abstain' (no stdout) | 'deny' | 'ask' | 'allow'
-# reason:    permissionDecisionReason, or '' when abstaining
-# returncode/stdout/stderr: the raw process result, for the fail-safe tests that
-#                           assert on exit code and empty output directly.
-HookResult = namedtuple("HookResult", "decision reason returncode stdout stderr")
+
+class HookResult(NamedTuple):
+    """One hook invocation, normalised for assertions.
+
+    ``decision`` is the permissionDecision the hook emitted -- ``deny`` / ``ask``
+    / ``allow`` -- or ``abstain`` when it emitted nothing. ``reason`` is the
+    permissionDecisionReason (``''`` when abstaining). ``returncode`` / ``stdout``
+    / ``stderr`` are the raw process result, kept so the fail-safe tests can
+    assert on the exit code and empty output directly.
+    """
+
+    decision: str
+    reason: str
+    returncode: int
+    stdout: str
+    stderr: str
 
 
 def run_hook(payload, env=None, cwd=None):
@@ -48,35 +59,33 @@ def run_hook(payload, env=None, cwd=None):
     ``os.getcwd()`` fallback); per-payload ``cwd`` is set separately by the
     payload builders and drives the frontmatter walk-up.
     """
-    text = payload if isinstance(payload, str) else json.dumps(payload)
+    stdin_text = payload if isinstance(payload, str) else json.dumps(payload)
     full_env = dict(os.environ)
     if env:
         full_env.update(env)
-    p = subprocess.run(
+    proc = subprocess.run(
         [sys.executable, SCRIPT],
-        input=text,
+        input=stdin_text,
         capture_output=True,
         text=True,
         env=full_env,
         cwd=cwd,
         check=False,  # returncode is asserted explicitly just below
     )
-    assert p.returncode == 0, "hook must always exit 0, got %r (stderr=%r)" % (
-        p.returncode,
-        p.stderr,
+    assert proc.returncode == 0, (
+        f"hook must always exit 0, got {proc.returncode!r} (stderr={proc.stderr!r})"
     )
-    out = p.stdout.strip()
-    if not out:
-        return HookResult("abstain", "", p.returncode, p.stdout, p.stderr)
-    data = json.loads(out)
-    hso = data["hookSpecificOutput"]
-    assert hso["hookEventName"] == "PreToolUse", hso
+    emitted = proc.stdout.strip()
+    if not emitted:
+        return HookResult("abstain", "", proc.returncode, proc.stdout, proc.stderr)
+    hook_output = json.loads(emitted)["hookSpecificOutput"]
+    assert hook_output["hookEventName"] == "PreToolUse", hook_output
     return HookResult(
-        hso["permissionDecision"],
-        hso.get("permissionDecisionReason", ""),
-        p.returncode,
-        p.stdout,
-        p.stderr,
+        hook_output["permissionDecision"],
+        hook_output.get("permissionDecisionReason", ""),
+        proc.returncode,
+        proc.stdout,
+        proc.stderr,
     )
 
 
@@ -123,48 +132,48 @@ class HookTestCase(unittest.TestCase):
     """
 
     def assert_deny(self, payload, reason_substring=None, env=None, cwd=None, msg=None):
+        """Run the hook and assert it denied (optionally for a reason substring)."""
         res = run_hook(payload, env=env, cwd=cwd)
         self.assertEqual(
             res.decision,
             "deny",
-            msg or "expected deny; reason=%r stderr=%r" % (res.reason, res.stderr),
+            msg or f"expected deny; reason={res.reason!r} stderr={res.stderr!r}",
         )
         if reason_substring is not None:
             self.assertIn(reason_substring, res.reason, msg)
         return res
 
     def assert_ask(self, payload, reason_substring=None, env=None, cwd=None, msg=None):
+        """Run the hook and assert it asked (optionally for a reason substring)."""
         res = run_hook(payload, env=env, cwd=cwd)
         self.assertEqual(
             res.decision,
             "ask",
-            msg or "expected ask; reason=%r stderr=%r" % (res.reason, res.stderr),
+            msg or f"expected ask; reason={res.reason!r} stderr={res.stderr!r}",
         )
         if reason_substring is not None:
             self.assertIn(reason_substring, res.reason, msg)
         return res
 
     def assert_abstain(self, payload, env=None, cwd=None, msg=None):
+        """Run the hook and assert it abstained (emitted nothing, exit 0)."""
         res = run_hook(payload, env=env, cwd=cwd)
         self.assertEqual(
             res.decision,
             "abstain",
             msg
-            or "expected abstain; decision=%r reason=%r stderr=%r"
-            % (res.decision, res.reason, res.stderr),
+            or f"expected abstain; decision={res.decision!r} reason={res.reason!r} "
+            f"stderr={res.stderr!r}",
         )
         return res
 
     # -- Workflow-script shorthands (most lexer/lint tests are script-driven) --
     def wf_deny(self, script, reason_substring=None, msg=None):
+        """Assert an inline Workflow `script` is denied."""
         return self.assert_deny(
             workflow_script(script), reason_substring, msg=msg or script
         )
 
-    def wf_ask(self, script, reason_substring=None, msg=None):
-        return self.assert_ask(
-            workflow_script(script), reason_substring, msg=msg or script
-        )
-
     def wf_abstain(self, script, msg=None):
+        """Assert an inline Workflow `script` is abstained on (allowed through)."""
         return self.assert_abstain(workflow_script(script), msg=msg or script)

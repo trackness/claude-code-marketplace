@@ -17,7 +17,7 @@ This lookup only covers filesystem agent definitions reachable from `cwd` upward
 
 ## Workflow static-lint semantics and limits
 
-The lint works on the script text submitted with the `Workflow` call (or read from `scriptPath`). It is fail-closed: anything the lint cannot positively verify — unterminated strings, unbalanced parentheses, nested `workflow()` calls, an unreadable `scriptPath`, or a payload carrying none of `script`/`scriptPath`/`name` — is denied rather than allowed through.
+The lint works on the script text submitted with the `Workflow` call (or read from `scriptPath`). It is fail-closed: anything the lint cannot positively verify — unterminated strings, unbalanced parentheses, nested `workflow()` calls, an unreadable `scriptPath`, or a payload carrying none of `script`/`scriptPath`/`name`/`resumeFromRunId` — is denied rather than allowed through.
 
 **Saved / bundled workflow invocations** (name-only or `resumeFromRunId`-only calls, e.g. resuming `/deep-research`, where the caller has no script text to rewrite) are not linted. These get `permissionDecision: "ask"` instead of an automatic deny, so the user gates them at runtime. Set `STRICT_SAVED_WORKFLOWS = True` in the script to flip this to a hard deny instead.
 
@@ -49,4 +49,4 @@ Edit the constants at the top of `scripts/enforce_explicit_model.py`:
 
 ## Requirements
 
-- `python3` (standard library only — no third-party dependencies)
+- Python 3.14+ (standard library only — no third-party dependencies)
