@@ -1,0 +1,7 @@
+{
+  "name": "model-guard",
+  "displayName": "Model Guard",
+  "version": "1.0.0",
+  "description": "PreToolUse hook denying subagent/workflow spawns that omit an explicit model (fable banned)",
+  "author": { "name": "trackness", "email": "trackness@users.noreply.github.com" }
+}

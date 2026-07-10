@@ -18,6 +18,15 @@
         "name": "trackness",
         "email": "trackness@users.noreply.github.com"
       }
+    },
+    {
+      "name": "model-guard",
+      "description": "PreToolUse hook denying subagent/workflow spawns that omit an explicit model (fable banned)",
+      "source": "./plugins/model-guard",
+      "author": {
+        "name": "trackness",
+        "email": "trackness@users.noreply.github.com"
+      }
     }
   ]
 }
