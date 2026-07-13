@@ -235,6 +235,7 @@ if __name__ == "__main__":
 - [ ] Create `plugins/question-guard/scripts/_remind.py` with exactly (this is the FULL detector implementation):
 
 ````python
+#!/usr/bin/env python3
 """Question-guard core (detection): find question sentences in a prompt.
 
 Written for Python 3.14+. The sibling entry point ``remind_questions.py`` guards
@@ -534,6 +535,7 @@ if __name__ == "__main__":
 - [ ] Overwrite `plugins/question-guard/scripts/_remind.py` with exactly (detector + directive detection + composition; FULL file):
 
 ````python
+#!/usr/bin/env python3
 """Question-guard core: detect question sentences and compose the reminder.
 
 Written for Python 3.14+. The sibling entry point ``remind_questions.py`` guards
@@ -916,6 +918,7 @@ if __name__ == "__main__":
 - [ ] Overwrite `plugins/question-guard/scripts/_remind.py` with exactly (adds `json`/`os`/`sys`, `_emit`, `main`, `__main__`; FULL final file):
 
 ````python
+#!/usr/bin/env python3
 """Question-guard core: detect question sentences and compose the reminder.
 
 Written for Python 3.14+. The sibling entry point ``remind_questions.py`` guards
