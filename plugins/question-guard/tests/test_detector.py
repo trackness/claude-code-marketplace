@@ -12,6 +12,7 @@ stdlib only; python3 >= 3.14.
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.abspath(os.path.join(HERE, "..", "scripts"))
@@ -124,6 +125,30 @@ class ComposeReminderTests(unittest.TestCase):
         qs = ["why " + ("x" * 300) + "?" for _ in range(20)]
         out = _remind.compose_reminder(qs, False)
         self.assertLessEqual(len(out), _remind.MAX_REMINDER_CHARS)
+        self.assertIn("Questions are questions.", out)  # template text survives
+
+    def test_hard_cap_drops_trailing_quotes_when_exceeded(self):
+        # Under the shipped constants the cap is never actually reached (max
+        # output is ~1.3k chars), so patch it down to force the while-loop's
+        # trailing-quote-dropping to actually engage.
+        qs = ["why " + ("x" * 300) + "?" for _ in range(20)]
+        with patch.object(_remind, "MAX_REMINDER_CHARS", 900):
+            out = _remind.compose_reminder(qs, False)
+        self.assertLessEqual(len(out), 900)
+        self.assertEqual(out.count(". why"), 2)  # dropped from 5 quotes to 2
+        self.assertIn("contains 20 question(s)", out)  # {n} still the true total
+        self.assertIn("Questions are questions.", out)  # template text survives
+
+    def test_hard_cap_falls_back_to_slicing_last_quote(self):
+        # Force a cap below what even a single remaining quote needs, so the
+        # while loop bottoms out at one quote and the final fallback has to
+        # hard-slice that quote's block to actually meet the cap.
+        qs = ["why " + ("x" * 300) + "?" for _ in range(20)]
+        with patch.object(_remind, "MAX_REMINDER_CHARS", 500):
+            out = _remind.compose_reminder(qs, False)
+        self.assertEqual(len(out), 500)  # fallback hits the cap exactly
+        self.assertEqual(out.count(". why"), 1)  # only one quote survives
+        self.assertNotIn("why " + ("x" * 300), out)  # that quote was sliced further
         self.assertIn("Questions are questions.", out)  # template text survives
 
 

@@ -187,19 +187,22 @@ def compose_reminder(questions, has_directives):
 
     ``n`` is the true total number of detected questions even when more than
     ``MAX_QUOTED_QUESTIONS`` are present; only the first few are quoted, each
-    hard-sliced to ``MAX_QUOTE_CHARS``. The final clamp drops trailing quotes,
-    then (defensively) hard-slices the quote block -- never the template text.
+    hard-sliced to ``MAX_QUOTE_CHARS``. The final clamp drops trailing quotes
+    down to a single remaining one, then (defensively) hard-slices that last
+    quote's block -- never the template text. This never fires under the
+    shipped constants (max possible output is well under the 3500-char cap);
+    it only engages if ``MAX_REMINDER_CHARS`` were tuned far smaller.
     """
     n = len(questions)
     template = MIXED_TEMPLATE if has_directives else PURE_TEMPLATE
     quotes = [q[:MAX_QUOTE_CHARS] for q in questions[:MAX_QUOTED_QUESTIONS]]
     reminder = _assemble(template, n, quotes)
-    while len(reminder) > MAX_REMINDER_CHARS and quotes:
+    while len(reminder) > MAX_REMINDER_CHARS and len(quotes) > 1:
         quotes.pop()
         reminder = _assemble(template, n, quotes)
-    if len(reminder) > MAX_REMINDER_CHARS:
+    if len(reminder) > MAX_REMINDER_CHARS and quotes:
         overhead = len(_assemble(template, n, []))
         budget = max(0, MAX_REMINDER_CHARS - overhead)
-        block = "\n".join(f"{i}. {q}" for i, q in enumerate(quotes, 1))
+        block = f"1. {quotes[0]}"
         reminder = template.format(n=n, quotes=block[:budget])
     return reminder
