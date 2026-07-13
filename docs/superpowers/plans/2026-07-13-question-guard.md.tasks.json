@@ -29,7 +29,7 @@
     {
       "id": 3,
       "subject": "Task 4: IO + entry + tests",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         2
       ],
@@ -38,7 +38,7 @@
     {
       "id": 4,
       "subject": "Task 5: Plugin README",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         3
       ],
@@ -47,7 +47,7 @@
     {
       "id": 5,
       "subject": "Task 6: Registration",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         0
       ],
@@ -56,7 +56,7 @@
     {
       "id": 6,
       "subject": "Task 7: End-to-end verification + push + PR",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         0,
         1,
@@ -68,5 +68,5 @@
       "description": "**Goal:** Run the full test suite, ruff, plugin validation, and a live in-session probe end-to-end, then push the branch and open exactly one pull request.\n\n**USER-ORDERED GATE \u2014 NON-SKIPPABLE.** This task was requested by the user in the current conversation.\n\n**Files:**\n- None (verification, then git push + gh pr create)\n\n**Acceptance Criteria:**\n- [ ] python3 -m unittest discover -s plugins/question-guard/tests -v reports all 34 tests OK.\n- [ ] The shared ruff command reports All checks passed on scripts and tests.\n- [ ] claude plugin validate ./plugins/question-guard reports Validation passed.\n- [ ] A live claude --plugin-dir plugins/question-guard session with QUESTION_GUARD_VISIBLE=1 shows the reminder for a question prompt; quiet-mode injection confirmed via claude --debug-file.\n- [ ] The branch is pushed to origin and exactly one PR is open, titled `feat: add question-guard plugin to marketplace`.\n\n**Verify:** `python3 -m unittest discover -s plugins/question-guard/tests -v` -> `Ran 34 tests` ... `OK`; then after push `gh pr list --head feat/question-guard-plugin` shows exactly one open PR.\n\n**Steps (abbreviated):**\n1. Run full unittest discover (34 OK), the shared ruff command (All checks passed), and claude plugin validate (Validation passed).\n2. Live probe: claude --plugin-dir plugins/question-guard, /hooks to confirm registration, submit \"can you clean this up?\" with QUESTION_GUARD_VISIBLE=1 (observe reminder), then confirm quiet additionalContext via claude --debug-file.\n3. `git push -u origin feat/question-guard-plugin`, then `gh pr create --title \"feat: add question-guard plugin to marketplace\"` with a body summarising the plugin + levers and ending with the two footer lines; confirm exactly one PR via `gh pr list --head feat/question-guard-plugin`.\n\n```json:metadata\n{\n  \"files\": [],\n  \"verifyCommand\": \"python3 -m unittest discover -s plugins/question-guard/tests -v\",\n  \"acceptanceCriteria\": [\n    \"python3 -m unittest discover -s plugins/question-guard/tests -v reports all 34 tests OK\",\n    \"ruff reports All checks passed on scripts and tests\",\n    \"claude plugin validate ./plugins/question-guard reports validation passed\",\n    \"a live claude --plugin-dir session with QUESTION_GUARD_VISIBLE=1 shows the reminder; quiet injection confirmed via claude --debug-file\",\n    \"the branch is pushed and exactly one PR is open titled 'feat: add question-guard plugin to marketplace'\"\n  ],\n  \"modelTier\": \"standard\",\n  \"userGate\": true,\n  \"tags\": [\n    \"user-gate\"\n  ]\n}\n```"
     }
   ],
-  "lastUpdated": "2026-07-13T19:56:23Z"
+  "lastUpdated": "2026-07-13T20:22:34Z"
 }
