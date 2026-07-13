@@ -14,6 +14,7 @@ claude plugin install gh-pm@trackness
 |-----------------------------------------------|---------|-----------------------------------------------------------------------------------------------|---------------------------------------------------------|
 | [`gh-pm`](https://github.com/trackness/gh-pm) | 3.0.0   | GitHub project management workflows, enforcement hooks, and PR reviewer agent                 | [trackness/gh-pm](https://github.com/trackness/gh-pm) |
 | [`model-guard`](plugins/model-guard)          | 1.0.0   | PreToolUse hook denying subagent/workflow spawns that omit an explicit model (fable banned)   | [plugins/model-guard](plugins/model-guard)            |
+| [`question-guard`](plugins/question-guard)    | 1.0.0   | UserPromptSubmit hook injecting a reminder that a question requires an answer, never action (questions are not directives) | [plugins/question-guard](plugins/question-guard) |
 
 ### gh-pm
 
@@ -38,3 +39,13 @@ Denies `Agent`/`Task`/`Workflow` spawns that omit an explicit `model`, and bans 
 
 **Requirements:**
 - Python 3.14+ (standard library only). On an older `python3` the hook fails closed — it denies every `Agent`/`Task`/`Workflow` spawn until a 3.14+ interpreter is used.
+
+### question-guard
+
+Detects question sentences in each submitted prompt and injects a reminder that a question must be answered and never authorizes action by itself — so a question phrased like a request ("can you clean this up?") is answered, not acted on.
+
+**Includes:**
+- **1 enforcement hook** — `UserPromptSubmit` hook that detects question sentences and injects a reminder into Claude's context
+
+**Requirements:**
+- Python 3.14+ (standard library only). On an older `python3` the hook silently does nothing — fail-open by design, since a missing reminder is harmless.

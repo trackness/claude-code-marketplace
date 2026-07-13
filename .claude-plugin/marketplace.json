@@ -27,6 +27,15 @@
         "name": "trackness",
         "email": "trackness@users.noreply.github.com"
       }
+    },
+    {
+      "name": "question-guard",
+      "description": "UserPromptSubmit hook injecting a reminder that a question requires an answer, never action (questions are not directives)",
+      "source": "./plugins/question-guard",
+      "author": {
+        "name": "trackness",
+        "email": "trackness@users.noreply.github.com"
+      }
     }
   ]
 }
