@@ -386,13 +386,13 @@ Claude-Session: https://claude.ai/code/session_01GsMUs3eWHPku9ss86owvuH"
 - [ ] With 7 questions the reminder quotes only the first 5 (`"5. "` present, `"6. "` absent) but reports `"contains 7 question(s)"`.
 - [ ] A 300-char question is hard-sliced to `MAX_QUOTE_CHARS` (200) with no ellipsis character.
 - [ ] With 20 long questions the reminder length is ≤ `MAX_REMINDER_CHARS` and the template instruction text survives.
-- [ ] All 24 tests pass and the module is ruff-clean.
+- [ ] All 26 tests pass and the module is ruff-clean.
 
 **Verify:**
 ```bash
 cd plugins/question-guard && python3 -m unittest discover -s tests -v
 ```
-Expected: `Ran 24 tests` … `OK`. Then the shared ruff command → `All checks passed!`.
+Expected: `Ran 26 tests` … `OK`. Then the shared ruff command → `All checks passed!`.
 
 **Steps:**
 - [ ] Overwrite `plugins/question-guard/tests/test_detector.py` with exactly (adds the two new classes; FULL file):
@@ -412,6 +412,7 @@ stdlib only; python3 >= 3.14.
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.abspath(os.path.join(HERE, "..", "scripts"))
@@ -526,12 +527,36 @@ class ComposeReminderTests(unittest.TestCase):
         self.assertLessEqual(len(out), _remind.MAX_REMINDER_CHARS)
         self.assertIn("Questions are questions.", out)  # template text survives
 
+    def test_hard_cap_drops_trailing_quotes_when_exceeded(self):
+        # Under the shipped constants the cap is never actually reached (max
+        # output is ~1.3k chars), so patch it down to force the while-loop's
+        # trailing-quote-dropping to actually engage.
+        qs = ["why " + ("x" * 300) + "?" for _ in range(20)]
+        with patch.object(_remind, "MAX_REMINDER_CHARS", 900):
+            out = _remind.compose_reminder(qs, False)
+        self.assertLessEqual(len(out), 900)
+        self.assertEqual(out.count(". why"), 2)  # dropped from 5 quotes to 2
+        self.assertIn("contains 20 question(s)", out)  # {n} still the true total
+        self.assertIn("Questions are questions.", out)  # template text survives
+
+    def test_hard_cap_falls_back_to_slicing_last_quote(self):
+        # Force a cap below what even a single remaining quote needs, so the
+        # while loop bottoms out at one quote and the final fallback has to
+        # hard-slice that quote's block to actually meet the cap.
+        qs = ["why " + ("x" * 300) + "?" for _ in range(20)]
+        with patch.object(_remind, "MAX_REMINDER_CHARS", 500):
+            out = _remind.compose_reminder(qs, False)
+        self.assertEqual(len(out), 500)  # fallback hits the cap exactly
+        self.assertEqual(out.count(". why"), 1)  # only one quote survives
+        self.assertNotIn("why " + ("x" * 300), out)  # that quote was sliced further
+        self.assertIn("Questions are questions.", out)  # template text survives
+
 
 if __name__ == "__main__":
     unittest.main()
 ````
 
-- [ ] Run `cd plugins/question-guard && python3 -m unittest discover -s tests -v`. Expected FAILURE: `AttributeError: module '_remind' has no attribute 'detect_directives'` → `FAILED (errors=9)`.
+- [ ] Run `cd plugins/question-guard && python3 -m unittest discover -s tests -v`. Expected FAILURE: `AttributeError: module '_remind' has no attribute 'detect_directives'` → `FAILED (errors=11)`.
 - [ ] Overwrite `plugins/question-guard/scripts/_remind.py` with exactly (detector + directive detection + composition; FULL file):
 
 ````python
@@ -724,25 +749,28 @@ def compose_reminder(questions, has_directives):
 
     ``n`` is the true total number of detected questions even when more than
     ``MAX_QUOTED_QUESTIONS`` are present; only the first few are quoted, each
-    hard-sliced to ``MAX_QUOTE_CHARS``. The final clamp drops trailing quotes,
-    then (defensively) hard-slices the quote block -- never the template text.
+    hard-sliced to ``MAX_QUOTE_CHARS``. The final clamp drops trailing quotes
+    down to a single remaining one, then (defensively) hard-slices that last
+    quote's block -- never the template text. This never fires under the
+    shipped constants (max possible output is well under the 3500-char cap);
+    it only engages if ``MAX_REMINDER_CHARS`` were tuned far smaller.
     """
     n = len(questions)
     template = MIXED_TEMPLATE if has_directives else PURE_TEMPLATE
     quotes = [q[:MAX_QUOTE_CHARS] for q in questions[:MAX_QUOTED_QUESTIONS]]
     reminder = _assemble(template, n, quotes)
-    while len(reminder) > MAX_REMINDER_CHARS and quotes:
+    while len(reminder) > MAX_REMINDER_CHARS and len(quotes) > 1:
         quotes.pop()
         reminder = _assemble(template, n, quotes)
-    if len(reminder) > MAX_REMINDER_CHARS:
+    if len(reminder) > MAX_REMINDER_CHARS and quotes:
         overhead = len(_assemble(template, n, []))
         budget = max(0, MAX_REMINDER_CHARS - overhead)
-        block = "\n".join(f"{i}. {q}" for i, q in enumerate(quotes, 1))
+        block = f"1. {quotes[0]}"
         reminder = template.format(n=n, quotes=block[:budget])
     return reminder
 ````
 
-- [ ] Re-run `cd plugins/question-guard && python3 -m unittest discover -s tests -v`. Expected: `Ran 24 tests` … `OK`.
+- [ ] Re-run `cd plugins/question-guard && python3 -m unittest discover -s tests -v`. Expected: `Ran 26 tests` … `OK`.
 - [ ] Run the shared ruff command. Expected: `All checks passed!`.
 - [ ] Commit:
 
@@ -753,7 +781,7 @@ Claude-Session: https://claude.ai/code/session_01GsMUs3eWHPku9ss86owvuH"
 ```
 
 ```json:metadata
-{"files": ["plugins/question-guard/scripts/_remind.py", "plugins/question-guard/tests/test_detector.py"], "verifyCommand": "cd plugins/question-guard && python3 -m unittest discover -s tests -v", "acceptanceCriteria": ["detect_directives is True for 'add a test', 'please add a test', 'let's ship it'; False for 'is it done?'", "compose_reminder uses the PURE template with count and numbered quote when no directives", "compose_reminder uses the MIXED template when directives are present", "with 7 questions only the first 5 are quoted but the count reports 7", "a 300-char question is hard-sliced to 200 chars with no ellipsis", "with 20 long questions the reminder is <= MAX_REMINDER_CHARS and template text survives", "all 24 tests pass and the module is ruff-clean"], "modelTier": "complex"}
+{"files": ["plugins/question-guard/scripts/_remind.py", "plugins/question-guard/tests/test_detector.py"], "verifyCommand": "cd plugins/question-guard && python3 -m unittest discover -s tests -v", "acceptanceCriteria": ["detect_directives is True for 'add a test', 'please add a test', 'let's ship it'; False for 'is it done?'", "compose_reminder uses the PURE template with count and numbered quote when no directives", "compose_reminder uses the MIXED template when directives are present", "with 7 questions only the first 5 are quoted but the count reports 7", "a 300-char question is hard-sliced to 200 chars with no ellipsis", "with 20 long questions the reminder is <= MAX_REMINDER_CHARS and template text survives", "all 26 tests pass and the module is ruff-clean"], "modelTier": "complex"}
 ```
 
 ---
@@ -773,13 +801,13 @@ Claude-Session: https://claude.ai/code/session_01GsMUs3eWHPku9ss86owvuH"
 - [ ] Silent exit 0 (no stdout, no stderr) on: no questions, malformed JSON stdin, missing `prompt` key.
 - [ ] A question that appears only after the first `INPUT_SCAN_CAP` characters is not detected.
 - [ ] The entry always exits 0 and writes no stderr.
-- [ ] All 32 tests pass and both scripts are ruff-clean.
+- [ ] All 34 tests pass and both scripts are ruff-clean.
 
 **Verify:**
 ```bash
 cd plugins/question-guard && python3 -m unittest discover -s tests -v
 ```
-Expected: `Ran 32 tests` … `OK`. Then (from repo root):
+Expected: `Ran 34 tests` … `OK`. Then (from repo root):
 ```bash
 echo '{"prompt":"why is the cache cold"}' | QUESTION_GUARD_VISIBLE=1 python3 plugins/question-guard/scripts/remind_questions.py
 ```
@@ -1113,20 +1141,23 @@ def compose_reminder(questions, has_directives):
 
     ``n`` is the true total number of detected questions even when more than
     ``MAX_QUOTED_QUESTIONS`` are present; only the first few are quoted, each
-    hard-sliced to ``MAX_QUOTE_CHARS``. The final clamp drops trailing quotes,
-    then (defensively) hard-slices the quote block -- never the template text.
+    hard-sliced to ``MAX_QUOTE_CHARS``. The final clamp drops trailing quotes
+    down to a single remaining one, then (defensively) hard-slices that last
+    quote's block -- never the template text. This never fires under the
+    shipped constants (max possible output is well under the 3500-char cap);
+    it only engages if ``MAX_REMINDER_CHARS`` were tuned far smaller.
     """
     n = len(questions)
     template = MIXED_TEMPLATE if has_directives else PURE_TEMPLATE
     quotes = [q[:MAX_QUOTE_CHARS] for q in questions[:MAX_QUOTED_QUESTIONS]]
     reminder = _assemble(template, n, quotes)
-    while len(reminder) > MAX_REMINDER_CHARS and quotes:
+    while len(reminder) > MAX_REMINDER_CHARS and len(quotes) > 1:
         quotes.pop()
         reminder = _assemble(template, n, quotes)
-    if len(reminder) > MAX_REMINDER_CHARS:
+    if len(reminder) > MAX_REMINDER_CHARS and quotes:
         overhead = len(_assemble(template, n, []))
         budget = max(0, MAX_REMINDER_CHARS - overhead)
-        block = "\n".join(f"{i}. {q}" for i, q in enumerate(quotes, 1))
+        block = f"1. {quotes[0]}"
         reminder = template.format(n=n, quotes=block[:budget])
     return reminder
 
@@ -1212,7 +1243,7 @@ if __name__ == "__main__":
     main()
 ````
 
-- [ ] Re-run `cd plugins/question-guard && python3 -m unittest discover -s tests -v`. Expected: `Ran 32 tests` … `OK`.
+- [ ] Re-run `cd plugins/question-guard && python3 -m unittest discover -s tests -v`. Expected: `Ran 34 tests` … `OK`.
 - [ ] Run the visible-mode one-liner from the Verify block; confirm the plain-text reminder appears.
 - [ ] Run the shared ruff command. Expected: `All checks passed!`.
 - [ ] Commit:
@@ -1224,7 +1255,7 @@ Claude-Session: https://claude.ai/code/session_01GsMUs3eWHPku9ss86owvuH"
 ```
 
 ```json:metadata
-{"files": ["plugins/question-guard/scripts/_remind.py", "plugins/question-guard/scripts/remind_questions.py", "plugins/question-guard/tests/test_output.py"], "verifyCommand": "cd plugins/question-guard && python3 -m unittest discover -s tests -v", "acceptanceCriteria": ["quiet default emits hookSpecificOutput with hookEventName UserPromptSubmit and additionalContext", "QUESTION_GUARD_VISIBLE in {1,true,yes,on} (case/space-insensitive) yields plain stdout; other/empty yields quiet JSON", "silent exit 0 on no questions, malformed JSON stdin, and missing prompt key", "a question beyond INPUT_SCAN_CAP characters is not detected", "the entry always exits 0 and writes no stderr", "all 32 tests pass and both scripts are ruff-clean"], "modelTier": "standard"}
+{"files": ["plugins/question-guard/scripts/_remind.py", "plugins/question-guard/scripts/remind_questions.py", "plugins/question-guard/tests/test_output.py"], "verifyCommand": "cd plugins/question-guard && python3 -m unittest discover -s tests -v", "acceptanceCriteria": ["quiet default emits hookSpecificOutput with hookEventName UserPromptSubmit and additionalContext", "QUESTION_GUARD_VISIBLE in {1,true,yes,on} (case/space-insensitive) yields plain stdout; other/empty yields quiet JSON", "silent exit 0 on no questions, malformed JSON stdin, and missing prompt key", "a question beyond INPUT_SCAN_CAP characters is not detected", "the entry always exits 0 and writes no stderr", "all 34 tests pass and both scripts are ruff-clean"], "modelTier": "standard"}
 ```
 
 ---
@@ -1408,7 +1439,7 @@ Claude-Session: https://claude.ai/code/session_01GsMUs3eWHPku9ss86owvuH"
 - None (verification, then `git push` + `gh pr create`)
 
 **Acceptance Criteria:**
-- [ ] `python3 -m unittest discover -s plugins/question-guard/tests -v` reports all 32 tests `OK`.
+- [ ] `python3 -m unittest discover -s plugins/question-guard/tests -v` reports all 34 tests `OK`.
 - [ ] The shared ruff command reports `All checks passed!` on `scripts` and `tests`.
 - [ ] `claude plugin validate ./plugins/question-guard` reports `✔ Validation passed`.
 - [ ] A live `claude --plugin-dir plugins/question-guard` session with `QUESTION_GUARD_VISIBLE=1` shows the reminder for a question prompt; quiet-mode injection is confirmed via `claude --debug-file`.
@@ -1418,14 +1449,14 @@ Claude-Session: https://claude.ai/code/session_01GsMUs3eWHPku9ss86owvuH"
 ```bash
 python3 -m unittest discover -s plugins/question-guard/tests -v
 ```
-Expected: `Ran 32 tests` … `OK`. Then, after push:
+Expected: `Ran 34 tests` … `OK`. Then, after push:
 ```bash
 gh pr list --head feat/question-guard-plugin
 ```
 Expected: exactly one open PR listed.
 
 **Steps:**
-- [ ] Run `python3 -m unittest discover -s plugins/question-guard/tests -v` from the repo root; confirm `Ran 32 tests` … `OK`.
+- [ ] Run `python3 -m unittest discover -s plugins/question-guard/tests -v` from the repo root; confirm `Ran 34 tests` … `OK`.
 - [ ] Run the shared ruff command; confirm `All checks passed!`.
 - [ ] Run `claude plugin validate ./plugins/question-guard`; confirm `✔ Validation passed`.
 - [ ] Live probe (visible mode): start `claude --plugin-dir plugins/question-guard`, run `/hooks` to confirm the `UserPromptSubmit` hook is registered, then in a shell set `QUESTION_GUARD_VISIBLE=1` and submit a prompt such as `can you clean this up?`; observe the plain-text reminder. Then confirm quiet-mode injection by launching with `claude --debug-file <path>` and checking the debug log shows the `additionalContext` payload for the same prompt.
@@ -1454,7 +1485,7 @@ Adds the **question-guard** plugin: a `UserPromptSubmit` hook that detects quest
 - Fail-open everywhere: malformed input, a missing prompt, an old (<3.14) interpreter, or any internal error produces no output and exit 0. Never exit 2, never `decision: block`.
 
 ## Tests
-- `python3 -m unittest discover -s plugins/question-guard/tests -v` → 32 tests, all passing; ruff clean; `claude plugin validate` passes.
+- `python3 -m unittest discover -s plugins/question-guard/tests -v` → 34 tests, all passing; ruff clean; `claude plugin validate` passes.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
@@ -1466,7 +1497,7 @@ EOF
 - [ ] Confirm exactly one PR is open with `gh pr list --head feat/question-guard-plugin`.
 
 ```json:metadata
-{"files": [], "verifyCommand": "python3 -m unittest discover -s plugins/question-guard/tests -v", "acceptanceCriteria": ["python3 -m unittest discover -s plugins/question-guard/tests -v reports all 32 tests OK", "ruff reports All checks passed on scripts and tests", "claude plugin validate ./plugins/question-guard reports validation passed", "a live claude --plugin-dir session with QUESTION_GUARD_VISIBLE=1 shows the reminder; quiet injection confirmed via claude --debug-file", "the branch is pushed and exactly one PR is open titled 'feat: add question-guard plugin to marketplace'"], "modelTier": "standard", "userGate": true, "tags": ["user-gate"]}
+{"files": [], "verifyCommand": "python3 -m unittest discover -s plugins/question-guard/tests -v", "acceptanceCriteria": ["python3 -m unittest discover -s plugins/question-guard/tests -v reports all 34 tests OK", "ruff reports All checks passed on scripts and tests", "claude plugin validate ./plugins/question-guard reports validation passed", "a live claude --plugin-dir session with QUESTION_GUARD_VISIBLE=1 shows the reminder; quiet injection confirmed via claude --debug-file", "the branch is pushed and exactly one PR is open titled 'feat: add question-guard plugin to marketplace'"], "modelTier": "standard", "userGate": true, "tags": ["user-gate"]}
 ```
 
 ---
