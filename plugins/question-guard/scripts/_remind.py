@@ -8,11 +8,17 @@ the interpreter version and imports this module lazily, so this file may use any
 All tuning knobs live in the constants block below -- the two levers the design
 exposes: (1) detection (the pattern sets and caps) and (2) the reminder (its
 templates and quote caps). Edit those constants to tune behaviour; nothing else
-needs changing. Stdin IO and the entry hand-off are added in the next task.
+needs changing.
+
+Failure policy is fail-OPEN: ``main`` swallows every error and stays silent, so a
+malformed prompt or an internal bug never blocks or erases the user's prompt.
 """
 
+import json
+import os
 import re
 import string
+import sys
 
 # ---- Detection levers (lever 1) -----------------------------------------
 # Only the first this-many characters of the prompt are scanned (latency guard).
@@ -206,3 +212,48 @@ def compose_reminder(questions, has_directives):
         block = f"1. {quotes[0]}"
         reminder = template.format(n=n, quotes=block[:budget])
     return reminder
+
+
+# ---- IO + entry ---------------------------------------------------------
+def _emit(reminder):
+    """Print the reminder: plain stdout when visible, else a JSON context payload."""
+    flag = os.environ.get("QUESTION_GUARD_VISIBLE", "").strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        print(reminder)
+        return
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": reminder,
+                }
+            }
+        )
+    )
+
+
+def main():
+    """Read the prompt on stdin, emit a reminder if it holds questions.
+
+    Fail-open: any malformed input, missing prompt, or internal error stays
+    silent and exits 0. Never exits non-zero, never emits decision:block.
+    """
+    try:
+        data = json.loads(sys.stdin.read())
+        if not isinstance(data, dict):
+            return
+        prompt = data.get("prompt")
+        if not isinstance(prompt, str) or not prompt:
+            return
+        text = prompt[:INPUT_SCAN_CAP]
+        questions = detect_questions(text)
+        if not questions:
+            return
+        _emit(compose_reminder(questions, detect_directives(text)))
+    except Exception:
+        return
+
+
+if __name__ == "__main__":
+    main()
