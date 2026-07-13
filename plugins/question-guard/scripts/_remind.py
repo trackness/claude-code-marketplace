@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Question-guard core (detection): find question sentences in a prompt.
+"""Question-guard core: detect question sentences and compose the reminder.
 
 Written for Python 3.14+. The sibling entry point ``remind_questions.py`` guards
 the interpreter version and imports this module lazily, so this file may use any
 3.14 syntax. Standard library only, no network.
 
-Detection is lever 1: every pattern set and cap is a named constant in the block
-below -- the tuning surface. Reminder composition and IO are added in later tasks.
+All tuning knobs live in the constants block below -- the two levers the design
+exposes: (1) detection (the pattern sets and caps) and (2) the reminder (its
+templates and quote caps). Edit those constants to tune behaviour; nothing else
+needs changing. Stdin IO and the entry hand-off are added in the next task.
 """
 
 import re
@@ -44,6 +46,44 @@ PRONOUN_NEXT = frozenset(
 
 # A '?'-less sentence ending with one of these tags is a (tag) question.
 TAG_ENDINGS = (", right", ", no", ", correct", ", yeah")
+
+# ---- Reminder + directive levers (lever 2) ------------------------------
+# A sentence whose first word is one of these (or that starts with "please " /
+# "let's ") is a directive. Directive detection ONLY selects the reminder
+# variant, so false positives are low-stakes.
+IMPERATIVE_LEADS = frozenset(
+    {
+        "add", "fix", "write", "implement", "update", "remove", "make", "run",
+        "create", "change", "refactor", "delete", "rename", "deploy", "install",
+        "build", "move", "use", "stop", "start", "revert", "merge", "push",
+        "commit", "rebase", "split", "extract", "convert", "migrate", "rewrite",
+        "document", "test", "ensure",
+    }
+)
+
+# At most this many detected questions are quoted in the reminder ...
+MAX_QUOTED_QUESTIONS = 5
+# ... each hard-sliced to at most this many characters (plain slice, no ellipsis).
+MAX_QUOTE_CHARS = 200
+# The whole reminder is clamped to this (headroom under the platform's 10k cap).
+MAX_REMINDER_CHARS = 3500
+
+# {n} is the TOTAL number of distinct detected questions (may exceed the 5 quoted);
+# {quotes} is the numbered quote block. Instruction text is never trimmed.
+PURE_TEMPLATE = (
+    "The user's latest message contains {n} question(s):\n"
+    "{quotes}\n"
+    "Questions are questions. Answer each one directly. A question NEVER "
+    "authorizes action by itself. If a question reads like a request to act "
+    "(e.g. 'can you clean this up?'), name the action a directive would trigger "
+    "and stop there — do not perform it."
+)
+MIXED_TEMPLATE = (
+    "The user's latest message mixes questions with directives. The question(s):\n"
+    "{quotes}\n"
+    "Answer EVERY question individually AND carry out the directives. The "
+    "questions themselves add no scope: act only on what is explicitly directed."
+)
 
 _STRIP = string.punctuation
 # A WH-led or aux-led sentence must have at least this many words to be a
@@ -109,6 +149,18 @@ def _is_question(sentence):
     return any(tail.endswith(t) for t in TAG_ENDINGS)  # (d) '?'-less tag question
 
 
+def _is_directive(sentence):
+    """True if the sentence is an imperative / "please " / "let's " directive."""
+    s = sentence.strip()
+    if not s:
+        return False
+    low = s.lower()
+    if low.startswith("please ") or low.startswith("let's "):
+        return True
+    toks = _tokens(s)
+    return bool(toks) and toks[0] in IMPERATIVE_LEADS
+
+
 def detect_questions(text):
     """Order-preserving list of detected question sentences (one entry each).
 
@@ -116,3 +168,38 @@ def detect_questions(text):
     list length is the count of distinct detected question sentences.
     """
     return [s for s in _split_sentences(_sanitize(text)) if _is_question(s)]
+
+
+def detect_directives(text):
+    """True if any sanitized sentence looks like a directive."""
+    return any(_is_directive(s) for s in _split_sentences(_sanitize(text)))
+
+
+# ---- Reminder composition -----------------------------------------------
+def _assemble(template, n, quotes):
+    """Fill a template with the count and a numbered quote block."""
+    block = "\n".join(f"{i}. {q}" for i, q in enumerate(quotes, 1))
+    return template.format(n=n, quotes=block)
+
+
+def compose_reminder(questions, has_directives):
+    """Build the reminder text from detected questions + the directive flag.
+
+    ``n`` is the true total number of detected questions even when more than
+    ``MAX_QUOTED_QUESTIONS`` are present; only the first few are quoted, each
+    hard-sliced to ``MAX_QUOTE_CHARS``. The final clamp drops trailing quotes,
+    then (defensively) hard-slices the quote block -- never the template text.
+    """
+    n = len(questions)
+    template = MIXED_TEMPLATE if has_directives else PURE_TEMPLATE
+    quotes = [q[:MAX_QUOTE_CHARS] for q in questions[:MAX_QUOTED_QUESTIONS]]
+    reminder = _assemble(template, n, quotes)
+    while len(reminder) > MAX_REMINDER_CHARS and quotes:
+        quotes.pop()
+        reminder = _assemble(template, n, quotes)
+    if len(reminder) > MAX_REMINDER_CHARS:
+        overhead = len(_assemble(template, n, []))
+        budget = max(0, MAX_REMINDER_CHARS - overhead)
+        block = "\n".join(f"{i}. {q}" for i, q in enumerate(quotes, 1))
+        reminder = template.format(n=n, quotes=block[:budget])
+    return reminder

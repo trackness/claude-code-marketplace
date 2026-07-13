@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Detector tests for question-guard's core module.
+"""Detector + composition tests for question-guard's core module.
 
 These exercise ``_remind`` in-process (no subprocess): sentence detection under
-the four question tests and sanitisation of pasted/quoted material.
+the four question tests, sanitisation of pasted/quoted material, directive
+detection for variant selection, and reminder composition (quoting, truncation,
+count reporting, the length clamp).
 
 stdlib only; python3 >= 3.14.
 """
@@ -72,6 +74,57 @@ class DetectQuestionsTests(unittest.TestCase):
 
     def test_empty_prompt_yields_nothing(self):
         self.assertEqual(_remind.detect_questions(""), [])
+
+
+class DetectDirectivesTests(unittest.TestCase):
+    """Directive detection -- used only to select the reminder variant."""
+
+    def test_imperative_lead_is_a_directive(self):
+        self.assertTrue(_remind.detect_directives("add a test"))
+
+    def test_please_prefix_is_a_directive(self):
+        self.assertTrue(_remind.detect_directives("please add a test"))
+
+    def test_lets_prefix_is_a_directive(self):
+        self.assertTrue(_remind.detect_directives("let's ship it"))
+
+    def test_pure_question_is_not_a_directive(self):
+        self.assertFalse(_remind.detect_directives("is it done?"))
+
+
+class ComposeReminderTests(unittest.TestCase):
+    """Reminder composition: variant, quoting, truncation, count, clamp."""
+
+    def test_pure_variant_when_no_directives(self):
+        out = _remind.compose_reminder(["Is it done?"], False)
+        self.assertIn("Questions are questions.", out)
+        self.assertIn("contains 1 question(s)", out)
+        self.assertIn("1. Is it done?", out)
+
+    def test_mixed_variant_when_directives(self):
+        out = _remind.compose_reminder(["Should we merge this?"], True)
+        self.assertIn("mixes questions with directives", out)
+        self.assertIn("act only on what is explicitly directed.", out)
+
+    def test_only_first_five_quoted_but_count_is_total(self):
+        qs = [f"Question number {i}?" for i in range(1, 8)]  # 7 questions
+        out = _remind.compose_reminder(qs, False)
+        self.assertIn("contains 7 question(s)", out)
+        self.assertIn("5. ", out)
+        self.assertNotIn("6. ", out)
+
+    def test_quote_hard_sliced_to_200_chars_no_ellipsis(self):
+        long_q = "why " + ("x" * 300) + "?"
+        out = _remind.compose_reminder([long_q], False)
+        self.assertNotIn("…", out)  # no ellipsis char
+        self.assertIn("1. " + long_q[:_remind.MAX_QUOTE_CHARS] + "\n", out)
+        self.assertNotIn(long_q[:_remind.MAX_QUOTE_CHARS] + "x", out)
+
+    def test_reminder_stays_within_hard_cap(self):
+        qs = ["why " + ("x" * 300) + "?" for _ in range(20)]
+        out = _remind.compose_reminder(qs, False)
+        self.assertLessEqual(len(out), _remind.MAX_REMINDER_CHARS)
+        self.assertIn("Questions are questions.", out)  # template text survives
 
 
 if __name__ == "__main__":
