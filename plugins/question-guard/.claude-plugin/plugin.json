@@ -1,0 +1,7 @@
+{
+  "name": "question-guard",
+  "displayName": "Question Guard",
+  "version": "1.0.0",
+  "description": "UserPromptSubmit hook injecting a reminder that a question requires an answer, never action (questions are not directives)",
+  "author": { "name": "trackness", "email": "trackness@users.noreply.github.com" }
+}
