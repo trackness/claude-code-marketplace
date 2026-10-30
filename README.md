@@ -27,7 +27,7 @@ Manages the full lifecycle of GitHub Issues through Claude Code: find gaps (`/gh
 
 **Requirements:**
 - `gh` CLI and `jq` installed
-- [`superpowers-extended-cc`](https://github.com/obra/superpowers) plugin enabled
+- [`superpowers`](https://github.com/obra/superpowers) plugin enabled
 - `.claude/project.json` in each consumer repo (created by `/gh-pm:setup-project`)
 
 ### model-guard
